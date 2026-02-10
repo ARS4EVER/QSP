@@ -1,0 +1,16 @@
+# 项目依赖
+# 数值计算
+numpy>=1.23.5
+
+# 图像处理
+opencv-python>=4.7.0.72
+pillow>=9.5.0
+
+# 科学计算
+scipy>=1.10.1
+
+# 加密功能
+pycryptodome>=3.18.0
+
+# 可视化
+matplotlib>=3.7.1
