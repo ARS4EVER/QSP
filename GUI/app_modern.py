@@ -439,6 +439,30 @@ class ModernApp(ctk.CTk):
             for file in files:
                 if file == os.path.basename(carrier_file):
                     return os.path.join(root, file)
+        # 尝试 4: 检查dataset/2_shares目录
+        dataset_path = os.path.join(project_root, "dataset", "2_shares")
+        if os.path.exists(dataset_path):
+            # 尝试直接拼接
+            path4 = os.path.join(dataset_path, carrier_file)
+            if os.path.exists(path4):
+                return path4
+            
+            # 尝试遍历dataset/2_shares目录
+            for root, dirs, files in os.walk(dataset_path):
+                for file in files:
+                    if file == os.path.basename(carrier_file):
+                        return os.path.join(root, file)
+        
+        # 尝试 5: 检查当前工作目录
+        cwd = os.getcwd()
+        path5 = os.path.join(cwd, carrier_file)
+        if os.path.exists(path5):
+            return path5
+        
+        # 尝试 6: 检查项目根目录
+        path6 = os.path.join(project_root, carrier_file)
+        if os.path.exists(path6):
+            return path6
         
         return None
 
