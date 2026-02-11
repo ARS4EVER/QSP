@@ -14,6 +14,7 @@ import json
 import hashlib
 import time
 import uuid
+import numpy as np
 from PIL import Image
 
 # --- 路径配置 ---
@@ -147,10 +148,16 @@ class ModernApp(ctk.CTk):
                 ctk.CTkButton(row, text="设为活跃", width=80, 
                              command=lambda fname=f: self.set_active_identity(fname)).pack(side="right", padx=10)
             else:
-                ctk.CTkLabel(row, text="[当前活跃]", text_color="#2CC985").pack(side="right", padx=10)
+                ctk.CTkButton(row, text="取消活跃", width=80, 
+                             command=self.unset_active_identity).pack(side="right", padx=10)
 
     def set_active_identity(self, filename):
         self.active_identity = filename
+        self.refresh_identity_list()
+        self.update_user_status() # 更新 User Tab 的状态
+        
+    def unset_active_identity(self):
+        self.active_identity = None
         self.refresh_identity_list()
         self.update_user_status() # 更新 User Tab 的状态
 
@@ -235,6 +242,18 @@ class ModernApp(ctk.CTk):
         if path:
             self.output_dir = path
             self.btn_output.configure(text=f"✅ {os.path.basename(path)}")
+            
+    def browse_assets_dir(self):
+        path = filedialog.askdirectory()
+        if path:
+            self.entry_assets.delete(0, 'end')
+            self.entry_assets.insert(0, path)
+            
+    def browse_keys_dir(self):
+        path = filedialog.askdirectory()
+        if path:
+            self.entry_keys.delete(0, 'end')
+            self.entry_keys.insert(0, path)
 
     def run_locking_process(self):
         if not (self.secret_path and self.covers_dir):
@@ -285,18 +304,30 @@ class ModernApp(ctk.CTk):
         ctk.CTkButton(status_bar, text="📂 加载资产清单 (Manifest)", command=self.load_manifest_file).pack(side="right", padx=10, pady=5)
 
         # 配置区
-        config_bar = ctk.CTkFrame(frame, height=60)
+        config_bar = ctk.CTkFrame(frame, height=80)
         config_bar.grid(row=1, column=0, sticky="ew", padx=10, pady=5)
         
-        ctk.CTkLabel(config_bar, text="资产位置:").pack(side="left", padx=10, pady=5)
-        self.entry_assets = ctk.CTkEntry(config_bar, width=200)
-        self.entry_assets.pack(side="left", padx=5, pady=5)
+        # 资产位置
+        assets_frame = ctk.CTkFrame(config_bar)
+        assets_frame.pack(side="left", padx=10, pady=5)
+        ctk.CTkLabel(assets_frame, text="资产位置:").pack(side="top", pady=2)
+        assets_entry_frame = ctk.CTkFrame(assets_frame)
+        assets_entry_frame.pack(side="top")
+        self.entry_assets = ctk.CTkEntry(assets_entry_frame, width=200)
+        self.entry_assets.pack(side="left", padx=5)
         self.entry_assets.insert(0, os.path.abspath("distributed_assets"))
+        ctk.CTkButton(assets_entry_frame, text="浏览", width=60, command=self.browse_assets_dir).pack(side="left", padx=5)
         
-        ctk.CTkLabel(config_bar, text="私钥库:").pack(side="left", padx=10, pady=5)
-        self.entry_keys = ctk.CTkEntry(config_bar, width=200)
-        self.entry_keys.pack(side="left", padx=5, pady=5)
+        # 私钥库
+        keys_frame = ctk.CTkFrame(config_bar)
+        keys_frame.pack(side="left", padx=10, pady=5)
+        ctk.CTkLabel(keys_frame, text="私钥库:").pack(side="top", pady=2)
+        keys_entry_frame = ctk.CTkFrame(keys_frame)
+        keys_entry_frame.pack(side="top")
+        self.entry_keys = ctk.CTkEntry(keys_entry_frame, width=200)
+        self.entry_keys.pack(side="left", padx=5)
         self.entry_keys.insert(0, os.path.abspath("my_identities"))
+        ctk.CTkButton(keys_entry_frame, text="浏览", width=60, command=self.browse_keys_dir).pack(side="left", padx=5)
 
         # 中部：交互式授权列表
         self.scroll_shares = ctk.CTkScrollableFrame(frame, label_text="待授权资产碎片 (Interactive Auth)")
@@ -439,6 +470,7 @@ class ModernApp(ctk.CTk):
             for file in files:
                 if file == os.path.basename(carrier_file):
                     return os.path.join(root, file)
+        
         # 尝试 4: 检查dataset/2_shares目录
         dataset_path = os.path.join(project_root, "dataset", "2_shares")
         if os.path.exists(dataset_path):
@@ -523,6 +555,19 @@ class ModernApp(ctk.CTk):
             
             if export_only:
                 # 导出为签名文件
+                
+                # 辅助函数：将可能包含ndarray的数据转换为可JSON序列化的类型
+                def convert_to_json_serializable(obj):
+                    if isinstance(obj, np.ndarray):
+                        return obj.tolist()
+                    elif isinstance(obj, list):
+                        return [convert_to_json_serializable(item) for item in obj]
+                    elif isinstance(obj, dict):
+                        return {key: convert_to_json_serializable(value) for key, value in obj.items()}
+                    else:
+                        return obj
+                
+                # 准备签名数据
                 signature_data = {
                     "share_index": entry['share_index'],
                     "share_fingerprint": current_hash,
@@ -532,16 +577,24 @@ class ModernApp(ctk.CTk):
                     "payload": payload
                 }
                 
+                # 转换为可JSON序列化的格式
+                signature_data_serializable = convert_to_json_serializable(signature_data)
+                
+                # 确保签名文件目录存在
+                signature_dir = os.path.join(project_root, "signatures")
+                os.makedirs(signature_dir, exist_ok=True)
+                
                 # 保存签名文件
                 export_path = filedialog.asksaveasfilename(
                     defaultextension=".sig",
                     filetypes=[("Signature Files", "*.sig"), ("All Files", "*")],
+                    initialdir=signature_dir,
                     initialfile=f"{self.active_identity.replace('.sk', '')}_signature.sig"
                 )
                 
                 if export_path:
                     with open(export_path, 'w') as f:
-                        json.dump(signature_data, f, indent=4)
+                        json.dump(signature_data_serializable, f, indent=4)
                     messagebox.showinfo("成功", f"签名文件已导出至: {export_path}")
             else:
                 # 将数据存入内存缓存
@@ -562,12 +615,17 @@ class ModernApp(ctk.CTk):
             messagebox.showwarning("提示", "请先加载资产清单")
             return
         
+        # 确保签名文件目录存在
+        signature_dir = os.path.join(project_root, "signatures")
+        os.makedirs(signature_dir, exist_ok=True)
+        
         # 查找归属人为当前活跃身份的碎片
+        active_alias = self.active_identity.replace('.sk', '')
         owner_shares = [entry for entry in self.loaded_manifest['registry'] 
-                      if entry['owner_alias'] == self.active_identity]
+                      if entry['owner_alias'] == active_alias]
         
         if not owner_shares:
-            messagebox.showwarning("提示", f"未找到归属人为 {self.active_identity} 的资产碎片")
+            messagebox.showwarning("提示", f"未找到归属人为 {active_alias} 的资产碎片")
             return
         
         # 对第一个归属人为当前活跃身份的碎片执行签名并导出
@@ -604,8 +662,25 @@ class ModernApp(ctk.CTk):
                 messagebox.showinfo("提示", "该份额已经被授权，无需重复导入")
                 return
             
-            # 将签名文件中的payload添加到内存缓存
-            self.authorized_shares.append(signature_data['payload'])
+            # 辅助函数：将Python列表转换回NumPy数组
+            def convert_to_numpy(obj):
+                if isinstance(obj, list):
+                    # 尝试转换为NumPy数组
+                    try:
+                        return np.array(obj)
+                    except:
+                        # 如果转换失败，递归处理列表中的元素
+                        return [convert_to_numpy(item) for item in obj]
+                elif isinstance(obj, dict):
+                    return {key: convert_to_numpy(value) for key, value in obj.items()}
+                else:
+                    return obj
+            
+            # 将签名文件中的payload转换回NumPy数组
+            payload_numpy = convert_to_numpy(signature_data['payload'])
+            
+            # 将转换后的payload添加到内存缓存
+            self.authorized_shares.append(payload_numpy)
             messagebox.showinfo("成功", f"签名文件已导入，所有者: {signature_data['owner_alias']}")
             self.refresh_share_list()
             
