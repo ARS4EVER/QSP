@@ -40,6 +40,21 @@ class AssetLocker:
         # 2. 数学准备
         moduli = generate_secure_moduli(n, t)
         img = Image.open(secret_img_path).convert('RGB')
+        # 设定最大边长限制 
+        MAX_DIMENSION = 256  
+
+        w, h = img.size
+        if max(w, h) > MAX_DIMENSION:
+            scale_ratio = MAX_DIMENSION / max(w, h)
+            new_w = int(w * scale_ratio)
+            new_h = int(h * scale_ratio)
+            
+            print(f"\n[Dealer] ⚠️  检测到高分辨率秘密图像 ({w}x{h})")
+            print(f"          正在执行智能压缩 -> {new_w}x{new_h} (使用 LANCZOS 算法保持画质)...")
+            
+            # 使用高质量重采样滤镜进行缩放
+            img = img.resize((new_w, new_h), Image.LANCZOS)
+
         splitter = ImageCRTSplitter(n, t, moduli)
         shares = splitter.split(np.array(img))
 
