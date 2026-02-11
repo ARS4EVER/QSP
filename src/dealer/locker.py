@@ -41,7 +41,7 @@ class AssetLocker:
         moduli = generate_secure_moduli(n, t)
         img = Image.open(secret_img_path).convert('RGB')
         # 设定最大边长限制 
-        MAX_DIMENSION = 256  
+        MAX_DIMENSION = 512 
 
         w, h = img.size
         if max(w, h) > MAX_DIMENSION:
