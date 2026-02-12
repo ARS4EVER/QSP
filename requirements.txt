@@ -1,0 +1,21 @@
+# 项目依赖
+# 数值计算
+numpy>=1.23.5
+
+# 图像处理 (仅保留 Pillow 用于 CRT 图片 IO)
+pillow>=9.5.0
+
+# 科学计算
+scipy>=1.10.1
+
+# 加密功能
+pycryptodome>=3.18.0
+
+# GUI 界面
+customtkinter>=5.1.0
+
+# 其他工具
+pystun3>=1.0.0
+
+# [移除] opencv-python (不再需要)
+# [移除] matplotlib (如果不再用于绘图调试)
