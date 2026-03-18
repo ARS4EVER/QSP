@@ -552,7 +552,7 @@ python -m pip install --upgrade --force-reinstall pip
 
 ## 附录：配置参数说明
 
-如需调整高级参数，可以编辑 `src/config.py`：
+如需调整高级参数，可编辑 `src/config.py`：
 
 | 参数类 | 参数 | 说明 | 默认值 |
 |--------|------|------|--------|
