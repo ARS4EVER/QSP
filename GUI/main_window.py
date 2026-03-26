@@ -1,9 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-GUI/main_window.py
-抗量子数字资产保护系统 - 主界面
-"""
-
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 import threading
