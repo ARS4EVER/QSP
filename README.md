@@ -576,14 +576,6 @@ python -m pip install --upgrade --force-reinstall pip
 **欢迎提出改进意见** ✨
 
 
-## Star History
 
-<a href="https://gitdata.xuanhun520.com/?repos=ARS4EVER/QSP&type=Date">
-<picture >
-  <source media="(prefers-color-scheme: dark) and (max-width: 800px)" srcset="https://gitdata.xuanhun520.com/api/starimg?repos=ARS4EVER/QSP&type=Date&theme=dark" />
-  <source  media="(prefers-color-scheme: light) and (max-width: 800px)" srcset="https://gitdata.xuanhun520.com/api/starimg?repos=ARS4EVER/QSP&type=Date&theme=light" />
-  <img style="width: 800px; height: 533px;" alt="Star History Chart" src="https://gitdata.xuanhun520.com/api/starimg?repos=ARS4EVER/QSP&type=Date&theme=light" />
-</picture>
-</a>
 
 
