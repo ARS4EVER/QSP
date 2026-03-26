@@ -576,6 +576,3 @@ python -m pip install --upgrade --force-reinstall pip
 **欢迎提出改进意见** ✨
 
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/image?repos=ARS4EVER/QSP&type=date&legend=top-left)](https://www.star-history.com/?repos=ARS4EVER%2FQSP&type=date&legend=top-left)
