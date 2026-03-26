@@ -578,11 +578,4 @@ python -m pip install --upgrade --force-reinstall pip
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=ARS4EVER%2FQSP&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=ARS4EVER/QSP&type=date&theme=dark&legend=bottom-right" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=ARS4EVER/QSP&type=date&legend=bottom-right" />
-   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=ARS4EVER/QSP&type=date&legend=bottom-right" />
- </picture>
-</a>
-
+[![Star History Chart](https://api.star-history.com/image?repos=ARS4EVER/QSP&type=date&legend=top-left)](https://www.star-history.com/?repos=ARS4EVER%2FQSP&type=date&legend=top-left)
