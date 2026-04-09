@@ -1,7 +1,3 @@
-"""
-src/app/backup_manager.py
-[Phase 10] 资产备份流水线 (本地金库加密版)
-"""
 import os
 import json
 import hashlib
