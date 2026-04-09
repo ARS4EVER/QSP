@@ -1,9 +1,3 @@
-"""
-src/app/vault_crypto.py
-[Phase 10] 本地金库加密模块 (Vault Crypto)
-保护落盘的 Shamir 份额，引入 PBKDF2 密钥派生与 AES-GCM，防止物理设备被攻破时泄露资产。
-"""
-
 import os
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
