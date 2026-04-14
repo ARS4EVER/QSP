@@ -1,12 +1,3 @@
-"""
-src/crypto_lattice/wrapper.py
-[Phase 1 Refactor] 标准后量子密码学高层适配器
-功能: 
-1. 提供标准 ML-DSA (Dilithium) API 用于节点的身份认证与数字签名。
-2. 提供标准 ML-KEM (Kyber) API 用于密钥交换与加密安全通道建立。
-不再暴露任何底层多项式或 NTT 数学接口，确保 100% 贴合 FIPS 标准。
-"""
-
 import os
 
 try:
