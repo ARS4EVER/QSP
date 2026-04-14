@@ -1,11 +1,3 @@
-"""
-src/crypto_lattice/signer.py
-[Phase 1 Refactor] 标准抗量子签名器
-
-放弃了复杂的门限签名（TSS）逻辑，回归纯粹的单节点标准签名。
-主要用于网络通信握手阶段的身份认证，防止中间人攻击。
-"""
-
 from .wrapper import LatticeWrapper
 
 class DilithiumSigner:
