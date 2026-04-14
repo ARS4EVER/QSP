@@ -1,11 +1,3 @@
-"""
-src/crypto_lattice/encryptor.py
-[Paper 5] 抗量子 KEM 封装
-
-此模块负责密钥协商，而不负责具体的数据加密。
-它利用 ML-KEM-512 算法生成一个只有通信双方知道的 32字节共享密钥。
-"""
-
 from .wrapper import LatticeWrapper
 
 class KyberKEM:
