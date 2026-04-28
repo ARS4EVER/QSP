@@ -1,9 +1,3 @@
-"""
-src/network/congestion.py
-[Phase 4] 混合自适应拥塞控制算法
-实现基于延迟梯度的动态加法增长与基于丢包率的多倍减少机制。
-"""
-
 import collections
 from typing import Optional
 
