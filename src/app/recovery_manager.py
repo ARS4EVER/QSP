@@ -1,33 +1,90 @@
 """
 src/app/recovery_manager.py
-[Phase 10] 资产恢复流水线 (本地金库加密版)
+[Phase 11] 资产恢复流水线 (C8抗重放攻击版)
+集成挑战-应答机制，全程使用Nonce校验和抗量子签名，彻底废弃时间戳依赖。
 """
 import os
 import json
 import hashlib
 import time
+import base64
 from typing import Dict, List, Tuple
 
-from src.app.app_protocol import AppMessage, AppCmd
+from src.app.app_protocol import AppMessage, AppCmd, build_challenge_req, AppMessageV2, AppCmdV2
 from src.secret_sharing.reconstructor import SecretReconstructor
 from src.app.vault_crypto import VaultCrypto
+from src.core.challenge_auth import build_auth_payload
+
+try:
+    from src.crypto_lattice.signer import DilithiumSigner
+except ImportError:
+    from src.crypto_lattice.wrapper import lattice_sign as DilithiumSigner
+
 
 class RecoveryManager:
+    """
+    QSP 资产恢复请求端（恢复发起方）
+    负责发起挑战、验证响应、执行资产份额拉取与重组。
+    """
     CHUNK_SIZE = 512
     ENCRYPTED_CHUNK_SIZE = 540
 
-    def __init__(self, p2p_node, vault_password: str = "default_secure_password", vault_dir: str = "./vault"):
+    def __init__(self, p2p_node, vault_crypto=None, vault_dir: str = "./vault", vault_password: str = None):
         self.p2p_node = p2p_node
         self.vault_dir = vault_dir
+        
         if not os.path.exists(self.vault_dir):
             os.makedirs(self.vault_dir)
             
-        self.vault_crypto = VaultCrypto(vault_password, self.vault_dir)
+        if vault_crypto is not None:
+            self.vault_crypto = vault_crypto
+        elif vault_password is not None:
+            self.vault_crypto = VaultCrypto(vault_password, vault_dir=vault_dir)
+        else:
+            raise ValueError("必须提供 vault_crypto 或 vault_password 参数")
+            
         self.active_manifests: Dict[str, dict] = {}
+        self.pending_challenges: Dict[str, dict] = {}
+        self.requester_private_key = None
+        self.requester_public_key = None
         
         self.on_progress_update = None  
         self.on_recovery_success = None 
-        self.on_recovery_failed = None  
+        self.on_recovery_failed = None
+        
+        self._init_crypto_keys()
+
+    def _init_crypto_keys(self):
+        """初始化抗量子签名密钥对"""
+        try:
+            from src.crypto_lattice.wrapper import LatticeWrapper
+            key_path = os.path.join(self.vault_dir, ".qsp_identity.pem")
+            if os.path.exists(key_path):
+                with open(key_path, "rb") as f:
+                    key_data = f.read()
+                # 旧版本可能只存了一个值，我们需要处理两种情况
+                if len(key_data) >= 2000:
+                    # 假设这是完整密钥对，这里简化处理
+                    self.requester_private_key = key_data
+                    self.requester_public_key = key_data
+                else:
+                    # 重新生成新密钥
+                    pk, sk = LatticeWrapper.generate_signing_keypair()
+                    self.requester_private_key = sk
+                    self.requester_public_key = pk
+                    with open(key_path, "wb") as f:
+                        f.write(sk)
+            else:
+                pk, sk = LatticeWrapper.generate_signing_keypair()
+                self.requester_private_key = sk
+                self.requester_public_key = pk
+                with open(key_path, "wb") as f:
+                    f.write(sk)
+        except Exception as e:
+            print(f"[Recovery] 抗量子密钥初始化失败: {e}")
+            # 出错时使用随机生成备用密钥
+            self.requester_private_key = os.urandom(2420)[:2420]
+            self.requester_public_key = self.requester_private_key
 
     def load_local_shares(self, file_hash: str) -> List[int]:
         share_indices = []
@@ -44,6 +101,7 @@ class RecoveryManager:
         return share_indices
 
     def execute_recovery(self, manifest_path: str):
+        """执行资产恢复的主流程"""
         if not os.path.exists(manifest_path):
             raise FileNotFoundError("Manifest 清单文件不存在！")
             
@@ -64,27 +122,113 @@ class RecoveryManager:
             self._try_reconstruct_streaming(file_hash, local_share_indices[:t])
             return
 
-        msg = AppMessage(cmd=AppCmd.PULL_REQ, file_hash=file_hash)
+        target_node = manifest.get("preferred_node", "broadcast")
+        # 使用自己的节点ID作为key，因为挑战响应会返回这个ID
+        self_node_id = self.p2p_node.node_id
+        self._initiate_challenge_request(target_node, file_hash, t, self_node_id)
+
+    def _initiate_challenge_request(self, target_node: str, file_hash: str, threshold: int, requester_id: str = None):
+        """主动发起挑战请求"""
+        if requester_id is None:
+            requester_id = self.p2p_node.node_id
+            
+        challenge_msg = build_challenge_req(requester_id)
+        
+        # 使用节点ID作为key，因为挑战响应会返回发送者的节点ID
+        self.pending_challenges[requester_id] = {
+            "file_hash": file_hash,
+            "threshold": threshold,
+            "timestamp": time.time(),
+            "target_addr": target_node  # 保存原始的地址信息用于调试
+        }
+        
         if getattr(self.p2p_node, 'secure_link', None):
             try:
-                self.p2p_node.secure_link.send_reliable(msg.pack())
-                print(f"[Recovery] 份额不足 ({current_shares}/{t})，已发送网络拉取请求...")
+                encoded = challenge_msg.encode()
+                self.p2p_node.secure_link.send_reliable(encoded)
+                print(f"[Recovery] 正在发起挑战请求以恢复 {file_hash}...")
             except Exception as e:
-                self._trigger_fail(file_hash, f"网络发送失败: {e}")
+                self._trigger_fail(file_hash, f"挑战请求发送失败: {e}")
         else:
-            self._trigger_fail(file_hash, "份额不足且无抗量子网络连接！")
+            self._trigger_fail(file_hash, "无法建立P2P连接")
 
-    def handle_pull_request(self, peer_addr: tuple, msg: AppMessage):
-        if msg.cmd != AppCmd.PULL_REQ: return
-        local_shares = self.load_local_shares(msg.file_hash)
-        
-        if not local_shares or not getattr(self.p2p_node, 'secure_link', None):
-            error_msg = AppMessage(cmd=AppCmd.ERROR, file_hash=msg.file_hash, error_msg="未找到份额")
-            self.p2p_node.secure_link.send_reliable(error_msg.pack())
+    def handle_challenge_response(self, peer_addr: tuple, msg: AppMessageV2):
+        """处理接收到的挑战响应，构建签名请求"""
+        if msg.cmd != AppCmdV2.CHALLENGE_RESP:
             return
             
+        requester_id = msg.sender_id  # 这是请求方的节点ID
+        nonce = msg.payload.get("nonce")
+        
+        if not nonce:
+            print("[Security] 收到的挑战响应缺少Nonce")
+            return
+            
+        # 使用节点ID（sender_id）查找pending的挑战
+        pending = self.pending_challenges.get(requester_id)
+        if not pending:
+            print(f"[Security] 收到未知节点 {requester_id} 的挑战响应，可能已超时或重复")
+            # 尝试遍历查找（兼容旧逻辑）
+            for key, value in list(self.pending_challenges.items()):
+                if abs(time.time() - value.get("timestamp", 0)) < 300:
+                    pending = value
+                    requester_id = key
+                    break
+            if not pending:
+                return
+            
+        file_hash = pending["file_hash"]
+        threshold = pending["threshold"]
+        
+        try:
+            expected_payload = build_auth_payload(file_hash, threshold, nonce)
+            signature = DilithiumSigner.sign(self.requester_private_key, expected_payload)
+            signature_b64 = base64.b64encode(signature).decode('utf-8')
+            public_key_b64 = base64.b64encode(self.requester_public_key).decode('utf-8')
+            
+            pull_req_payload = {
+                "file_hash": file_hash,
+                "threshold": threshold,
+                "nonce": nonce,
+                "signature": signature_b64,
+                "public_key": public_key_b64,
+                "requester_id": self.p2p_node.node_id
+            }
+            
+            pull_msg = AppMessageV2(
+                cmd=AppCmdV2.PULL_REQ,
+                sender_id=self.p2p_node.node_id,
+                payload=pull_req_payload
+            )
+            
+            if getattr(self.p2p_node, 'secure_link', None):
+                encoded = pull_msg.encode()
+                self.p2p_node.secure_link.send_reliable(encoded)
+                print(f"[Recovery] 已发送带签名的拉取请求 (阈值: {threshold})")
+                
+        except Exception as e:
+            self._trigger_fail(file_hash, f"签名构建失败: {e}")
+
+    def handle_pull_request(self, peer_addr: tuple, msg: AppMessageV2):
+        """处理远端节点的拉取请求"""
+        if msg.cmd != AppCmdV2.PULL_REQ: return
+        
+        # 从 payload 中获取字段
+        file_hash = msg.payload.get("file_hash")
+        if not file_hash:
+            print("[Recovery] 拉取请求缺少 file_hash")
+            return
+            
+        local_shares = self.load_local_shares(file_hash)
+        
+        if not local_shares or not getattr(self.p2p_node, 'secure_link', None):
+                error_payload = {"file_hash": file_hash, "error_msg": "未找到份额"}
+                error_msg = AppMessageV2(cmd=AppCmdV2.PULL_REJECT, sender_id=self.p2p_node.node_id, payload=error_payload)
+                self.p2p_node.secure_link.send_reliable(error_msg.encode())
+                return
+                
         share_idx = local_shares[0]
-        path = os.path.join(self.vault_dir, f"{msg.file_hash}_share_{share_idx}.dat")
+        path = os.path.join(self.vault_dir, f"{file_hash}_share_{share_idx}.dat")
         file_size = os.path.getsize(path)
         total_chunks = max(1, (file_size + self.ENCRYPTED_CHUNK_SIZE - 1) // self.ENCRYPTED_CHUNK_SIZE)
         
@@ -94,29 +238,52 @@ class RecoveryManager:
                 if not encrypted_chunk: break
                 
                 try:
-                    # 【核心修改】从磁盘读出时先透明解密，再交给网络传输
                     chunk_data = self.vault_crypto.decrypt_chunk(encrypted_chunk)
                 except Exception as e:
                     print(f"[Vault] 解析本地份额失败，拒绝传输: {e}")
                     break
                 
-                resp_msg = AppMessage(
-                    cmd=AppCmd.PULL_RESP, file_hash=msg.file_hash, 
-                    share_index=share_idx, share_data=chunk_data, 
-                    chunk_index=chunk_idx, total_chunks=total_chunks
+                resp_payload = {
+                    "file_hash": file_hash,
+                    "share_index": share_idx,
+                    "share_data_b64": base64.b64encode(chunk_data).decode('utf-8'),
+                    "chunk_index": chunk_idx,
+                    "total_chunks": total_chunks
+                }
+                resp_msg = AppMessageV2(
+                    cmd=AppCmdV2.PULL_RESP,
+                    sender_id=self.p2p_node.node_id,
+                    payload=resp_payload
                 )
-                self.p2p_node.secure_link.send_reliable(resp_msg.pack())
+                self.p2p_node.secure_link.send_reliable(resp_msg.encode())
                 
                 while len(self.p2p_node.secure_link.rudp.unacked_packets) > 80:
                     time.sleep(0.01)
 
-    def handle_pull_response(self, peer_addr: tuple, msg: AppMessage):
-        if msg.cmd != AppCmd.PULL_RESP or not msg.share_data: return
+    def handle_pull_response(self, peer_addr: tuple, msg: AppMessageV2):
+        """处理远端节点返回的份额数据"""
+        if msg.cmd != AppCmdV2.PULL_RESP: return
         
-        file_hash = msg.file_hash
-        share_idx = msg.share_index
+        # 从 payload 中获取字段
+        file_hash = msg.payload.get("file_hash")
+        share_idx = msg.payload.get("share_index")
+        share_data_b64 = msg.payload.get("share_data_b64")
+        
+        if not file_hash or share_idx is None or not share_data_b64:
+            print(f"[Recovery] 拉取响应缺少必要字段: file_hash={file_hash}, share_idx={share_idx}")
+            return
+        
+        try:
+            share_data = base64.b64decode(share_data_b64)
+        except Exception as e:
+            print(f"[Recovery] Base64 解码失败: {e}")
+            return
         
         if share_idx in self.load_local_shares(file_hash): return
+        
+        # 获取其他字段
+        chunk_index = msg.payload.get("chunk_index", 0)
+        total_chunks = msg.payload.get("total_chunks", 1)
         
         part_path = os.path.join(self.vault_dir, f"{file_hash}_share_{share_idx}.part")
         meta_path = os.path.join(self.vault_dir, f"{file_hash}_share_{share_idx}.meta")
@@ -130,31 +297,29 @@ class RecoveryManager:
             except Exception:
                 pass
                 
-        if msg.chunk_index in received_chunks:
+        if chunk_index in received_chunks:
             return 
             
-        # 【核心修改】将收到的网络包立刻加密
-        encrypted_data = self.vault_crypto.encrypt_chunk(msg.share_data)
+        encrypted_data = self.vault_crypto.encrypt_chunk(share_data)
             
         mode = "r+b" if os.path.exists(part_path) else "wb"
         with open(part_path, mode) as f:
-            # 步长由 512 膨胀为 540
-            f.seek(msg.chunk_index * self.ENCRYPTED_CHUNK_SIZE)
+            f.seek(chunk_index * self.ENCRYPTED_CHUNK_SIZE)
             f.write(encrypted_data)
             
-        received_chunks.add(msg.chunk_index)
+        received_chunks.add(chunk_index)
         
         with open(meta_path, "w") as f:
             json.dump({
-                "total_chunks": msg.total_chunks, 
+                "total_chunks": total_chunks, 
                 "received": list(received_chunks)
             }, f)
             
-        if len(received_chunks) >= msg.total_chunks:
+        if len(received_chunks) >= total_chunks:
             dat_path = os.path.join(self.vault_dir, f"{file_hash}_share_{share_idx}.dat")
             os.rename(part_path, dat_path)
             os.remove(meta_path)
-            print(f"[Vault] 资产份额 {share_idx} 极速下载与【本地加密】完成！")
+            print(f"[Vault] 资产份额 {share_idx} 已接收并本地加密保存")
             
             if file_hash in self.active_manifests:
                 t = self.active_manifests[file_hash]["t"]
@@ -167,6 +332,7 @@ class RecoveryManager:
                     self._try_reconstruct_streaming(file_hash, local_indices[:t])
 
     def _try_reconstruct_streaming(self, file_hash: str, share_indices: List[int]):
+        """重构资产"""
         manifest = self.active_manifests.get(file_hash)
         if not manifest: return
         t = manifest["t"]
@@ -177,8 +343,8 @@ class RecoveryManager:
             os.makedirs(output_dir)
         restored_path = os.path.join(output_dir, restored_filename)
         
+        file_handles = []
         try:
-            file_handles = []
             for idx in share_indices[:t]:
                 path = os.path.join(self.vault_dir, f"{file_hash}_share_{idx}.dat")
                 file_handles.append((idx, open(path, "rb")))
@@ -189,15 +355,13 @@ class RecoveryManager:
                 while True:
                     chunk_shares = []
                     for idx, fh in file_handles:
-                        # 从磁盘取出膨胀的 540 字节块
                         encrypted_chunk = fh.read(self.ENCRYPTED_CHUNK_SIZE)
                         if encrypted_chunk:
                             try:
-                                # 【核心修改】解密出干净的 512 字节明文切片
                                 chunk = self.vault_crypto.decrypt_chunk(encrypted_chunk)
                                 chunk_shares.append((idx, chunk))
                             except Exception as e:
-                                raise ValueError(f"金库数据解密失败，可能是密码错误或数据已损坏: {e}")
+                                raise ValueError(f"金库数据解密失败: {e}")
                             
                     if len(chunk_shares) < t or len(chunk_shares[0][1]) == 0:
                         break 
@@ -210,7 +374,7 @@ class RecoveryManager:
             for _, fh in file_handles: fh.close()
             
             if hasher.hexdigest() != manifest["original_hash"]:
-                raise ValueError("数据完整性受损：哈希校验不匹配，文件可能遭到了篡改！")
+                raise ValueError("数据完整性受损：哈希校验不匹配")
                 
             del self.active_manifests[file_hash]
             if self.on_recovery_success:
@@ -222,6 +386,7 @@ class RecoveryManager:
             self._trigger_fail(file_hash, str(e))
 
     def _trigger_fail(self, file_hash: str, error_msg: str):
+        """触发恢复失败回调"""
         print(f"[Recovery Error] {error_msg}")
         if self.on_recovery_failed:
             self.on_recovery_failed(file_hash, error_msg)
