@@ -31,8 +31,6 @@
   <a href="https://github.com/ARS4EVER/QSP/issues">提出新特性</a> 
 </p>
 
-# QSP：基于PQC的抗量子秘密文件共享与传输系统
-
 ## 目录
 
 1. [项目简介](#项目简介)
