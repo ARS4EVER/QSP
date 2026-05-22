@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./images/logo.png" alt="QSP Logo" width="800"/>
+  <img src="./image/logo.png" alt="QSP Logo" width="800"/>
   <h1 align="center">QSP</h1>
   <h3 align="center">基于PQC的抗量子秘密文件共享与传输系统</h3>
 </div>
