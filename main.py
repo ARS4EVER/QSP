@@ -1,10 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-主应用程序入口文件
-文件路径: main.py
-
-抗量子数字资产保护系统 - 启动入口
-"""
 
 import os
 import sys
@@ -22,19 +16,28 @@ from src.config import DATA_DIR, KEYS_DIR
 from src.network.p2p_manager import P2PNode
 from src.crypto_lattice.wrapper import LatticeWrapper
 
-# 【新增导入】：引入第二步扩展好的金库套件
+
 from src.app.vault_crypto import VaultCrypto, PasswordAuthError
 
-# ==========================================
-# 前置安全登录窗口 (来自第一步)
-# ==========================================
+
+# 前置安全登录窗口 
+
 class LoginWindow(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("QSP - 安全金库认证")
+        self.title("QSP - 本地认证")
         self.geometry("400x320")
         self.eval('tk::PlaceWindow . center')
         self.resizable(False, False)
+        
+        logo_path = os.path.join(os.path.dirname(__file__), "image", "logo.png")
+        if os.path.exists(logo_path):
+            try:
+                from PIL import Image
+                icon_image = Image.open(logo_path)
+                self.iconphoto(True, icon_image)
+            except:
+                pass
         
         self.vault_password = None
         
@@ -42,27 +45,27 @@ class LoginWindow(ctk.CTk):
         self.is_first_run = not os.path.exists(os.path.join(KEYS_DIR, ".vault_verifier"))
 
         # --- UI 构建 ---
-        title_text = "首次配置本地金库" if self.is_first_run else "解锁本地金库"
-        self.label = ctk.CTkLabel(self, text=title_text, font=("Arial", 16, "bold"))
+        title_text = "首次配置" if self.is_first_run else "解锁"
+        self.label = ctk.CTkLabel(self, text=title_text, font=("Arial", 16, "bold"), text_color="#333333")
         self.label.pack(pady=(20, 10))
         
         desc_text = "请设置高强度主密码\n(遗失将无法恢复本地数据)" if self.is_first_run else "请输入主密码以加载核心身份与分片"
-        self.desc_label = ctk.CTkLabel(self, text=desc_text, font=("Arial", 12))
+        self.desc_label = ctk.CTkLabel(self, text=desc_text, font=("Arial", 12), text_color="#666666")
         self.desc_label.pack(pady=(0, 20))
 
         # 密码输入框
-        self.entry_pwd = ctk.CTkEntry(self, show="*", width=260, placeholder_text="主密码")
+        self.entry_pwd = ctk.CTkEntry(self, show="*", width=260, placeholder_text="主密码", fg_color="#f8f8f8", text_color="#333333", border_color="#cccccc")
         self.entry_pwd.pack(pady=10)
         self.entry_pwd.bind("<Return>", self.submit)
 
         # 首次运行时的“确认密码”输入框
         if self.is_first_run:
-            self.entry_pwd_confirm = ctk.CTkEntry(self, show="*", width=260, placeholder_text="再次确认密码")
+            self.entry_pwd_confirm = ctk.CTkEntry(self, show="*", width=260, placeholder_text="再次确认密码", fg_color="#f8f8f8", text_color="#333333", border_color="#cccccc")
             self.entry_pwd_confirm.pack(pady=10)
             self.entry_pwd_confirm.bind("<Return>", self.submit)
 
         # 提交按钮
-        self.btn = ctk.CTkButton(self, text="确定", command=self.submit)
+        self.btn = ctk.CTkButton(self, text="确定", command=self.submit, fg_color="#444444", hover_color="#666666", text_color="white")
         self.btn.pack(pady=20)
 
     def submit(self, event=None):
@@ -94,7 +97,7 @@ class LoginWindow(ctk.CTk):
             self.entry_pwd.delete(0, 'end')
             
         except Exception as e:
-            messagebox.showerror("系统异常", f"初始化金库时发生未知错误:\n{str(e)}")
+            messagebox.showerror("系统异常", f"初始化时发生未知错误:\n{str(e)}")
             self.destroy()
             sys.exit(1)
 
@@ -119,7 +122,7 @@ class QSPApplication:
         【第四步优化】：由于 LoginWindow 已确保密码 100% 正确，这里不需要再捕获 InvalidTag 进行密码提示，
                 但仍保留作为纵深防御的最后一层，防止文件被篡改。
         """
-        # 注意：文件后缀从 .json 改为了 .dat，以表明这是一个二进制密文文件
+
         identity_file = os.path.join(KEYS_DIR, "node_identity.dat")
         
         # 实例化金库套件
@@ -199,12 +202,12 @@ class QSPApplication:
         self.invite_code = self.p2p_node.generate_invite_code()
         return self.p2p_node
 
-# ==========================================
+
 # 系统启动主入口点
-# ==========================================
+
 def main():
-    ctk.set_appearance_mode("Dark")
-    ctk.set_default_color_theme("blue")
+    ctk.set_appearance_mode("Light")
+    ctk.set_default_color_theme("dark-blue")
     
     # 1. 弹出前置认证窗口获取密码
     login_window = LoginWindow()
