@@ -101,7 +101,6 @@ class BackupManager:
         if msg.cmd != AppCmdV2.SHARE_PUSH:
             return
         
-        # 从 payload 中提取字段
         file_hash = msg.payload.get("file_hash")
         share_index = msg.payload.get("share_index")
         share_data_b64 = msg.payload.get("share_data_b64")

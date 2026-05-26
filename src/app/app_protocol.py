@@ -11,12 +11,7 @@ from enum import IntEnum, Enum
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-
-# ==========================================
-# 【旧版 API，保持向后兼容】
-# ==========================================
 class AppCmd(str, Enum):
-    """应用层核心指令集"""
     SHARE_PUSH = "SHARE_PUSH"
     PULL_REQ = "PULL_REQ"
     PULL_RESP = "PULL_RESP"
@@ -24,10 +19,7 @@ class AppCmd(str, Enum):
 
 
 class AppMessage:
-    """
-    应用层消息对象。
-    统一封装各类业务请求，处理二进制 payload 的 Base64 自动转换。
-    """
+
     def __init__(self, 
                  cmd: AppCmd, 
                  file_hash: str, 
@@ -106,14 +98,7 @@ class AppMessage:
         )
 
 
-# ==========================================
-# 【C8第二阶段扩展版】挑战-应答协议
-# ==========================================
 class AppCmdV2(IntEnum):
-    """
-    QSP 应用层协议指令集 (C8第二阶段扩展版)
-    定义了 P2P 节点之间业务通信的所有信令类型。
-    """
     PING = 1
     PONG = 2
     SHARE_PUSH = 3
@@ -127,20 +112,11 @@ class AppCmdV2(IntEnum):
 
 @dataclass
 class AppMessageV2:
-    """
-    QSP 应用层报文结构 (C8第二阶段扩展版)
-    负责将业务指令、发送方身份和负载数据序列化为二进制流，
-    以便通过底层 SecureChannel (AES-256-GCM) 发送。
-    """
     cmd: AppCmdV2
     sender_id: str
     payload: Dict[str, Any]
 
     def encode(self) -> bytes:
-        """
-        将报文对象序列化为 JSON 字节流。
-        为了确保跨平台的严格一致性，采用紧凑格式并按键排序。
-        """
         data = {
             "cmd": self.cmd.value,
             "sender_id": self.sender_id,
@@ -150,10 +126,6 @@ class AppMessageV2:
 
     @classmethod
     def decode(cls, data: bytes) -> 'AppMessageV2':
-        """
-        将接收到的二进制流反序列化为报文对象。
-        包含严格的格式与指令校验，防止恶意格式攻击。
-        """
         try:
             parsed = json.loads(data.decode('utf-8'))
             
@@ -175,11 +147,7 @@ class AppMessageV2:
             raise ValueError(f"报文结构异常: {e}")
 
 
-# ==========================================
-# 工具函数：快捷构建特定报文 (C8第二阶段)
-# ==========================================
 def build_challenge_req(sender_id: str) -> AppMessageV2:
-    """快捷构建挑战申请报文"""
     return AppMessageV2(
         cmd=AppCmdV2.CHALLENGE_REQ,
         sender_id=sender_id,
@@ -187,7 +155,6 @@ def build_challenge_req(sender_id: str) -> AppMessageV2:
     )
 
 def build_challenge_resp(sender_id: str, nonce: str) -> AppMessageV2:
-    """快捷构建挑战响应报文"""
     return AppMessageV2(
         cmd=AppCmdV2.CHALLENGE_RESP,
         sender_id=sender_id,
