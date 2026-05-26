@@ -70,10 +70,10 @@ QSP是一个基于格密码学的综合性安全系统，专注于提供抗量�
 	<tbody>
 		<tr>
             <td align="center">
-                <a href="https://github.com/kan-ner">
-                    <img src="https://avatars.githubusercontent.com/u/203961430?v=4" width="50;" alt="kan-ner"/>
+                <a href="https://github.com/amonadam">
+                    <img src="https://avatars.githubusercontent.com/u/164615153?v=4" width="50;" alt="amonadam"/>
                     <br />
-                    <sub><b>kan-ner</b></sub>
+                    <sub><b>amonadam</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -81,13 +81,6 @@ QSP是一个基于格密码学的综合性安全系统，专注于提供抗量�
                     <img src="https://avatars.githubusercontent.com/u/164615540?v=4" width="50;" alt="ARS4EVER"/>
                     <br />
                     <sub><b>ARS4EVER</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/amonadam">
-                    <img src="https://avatars.githubusercontent.com/u/164615153?v=4" width="50;" alt="amonadam"/>
-                    <br />
-                    <sub><b>amonadam</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -111,8 +104,6 @@ QSP是一个基于格密码学的综合性安全系统，专注于提供抗量�
                     <sub><b>Martin8edg</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/nicolosshit">
                     <img src="https://avatars.githubusercontent.com/u/269751672?v=4" width="50;" alt="nicolosshit"/>
@@ -120,11 +111,20 @@ QSP是一个基于格密码学的综合性安全系统，专注于提供抗量�
                     <sub><b>nicolosshit</b></sub>
                 </a>
             </td>
+		</tr>
+		<tr>
             <td align="center">
                 <a href="https://github.com/IsAlPhA77">
                     <img src="https://avatars.githubusercontent.com/u/153442774?v=4" width="50;" alt="IsAlPhA77"/>
                     <br />
                     <sub><b>isalpha</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/kan-ner">
+                    <img src="https://avatars.githubusercontent.com/u/203961430?v=4" width="50;" alt="kan-ner"/>
+                    <br />
+                    <sub><b>kan-ner</b></sub>
                 </a>
             </td>
             <td align="center">
