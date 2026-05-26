@@ -5,16 +5,13 @@ from typing import List, Tuple, Optional, Dict, Any
 
 
 class PacketType(IntEnum):
-    # -- NAT 穿透与维持信令 --
     HOLEPUNCH = 0x01
     HOLEPUNCH_ACK = 0x02
-    KEEPALIVE = 0x03      # <--- 新增：心跳保活探测包
+    KEEPALIVE = 0x03  
     
-    # --- 抗量子安全握手 ---
     HANDSHAKE_INIT = 0x10
     HANDSHAKE_RESP = 0x11
     
-    # --- 高带宽可靠传输 (RUDP) ---
     DATA = 0x20
     ACK = 0x21
     SACK = 0x22

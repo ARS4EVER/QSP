@@ -1,5 +1,3 @@
-# core模块初始化文件
-
 from .messages import RecoveryMessage, RecoveryMsgType
 from .challenge_auth import ChallengeManager, build_auth_payload
 

@@ -1,7 +1,6 @@
 """
 src/network/p2p_manager.py
 [Phase 5 Refactor] 多路并发 P2P 节点管理器
-去除多余的 RUDP 包装，回归纯净 Socket，通过 secure_links 字典支持 1vN 广域网连接。
 """
 
 import socket
@@ -36,10 +35,10 @@ class PunchState(Enum):
 
 class STUNClient:
     STUN_SERVERS = [
-        ('stun.qq.com', 3478),           # 腾讯 STUN (国内首选)
-        ('stun.miwifi.com', 3478),       # 小米 STUN (国内极速)
-        ('stun.aliyun.com', 3478),       # 阿里云 STUN
-        ('stun.l.google.com', 19302),    # Google (备用)
+        ('stun.qq.com', 3478),           
+        ('stun.miwifi.com', 3478),       
+        ('stun.aliyun.com', 3478),       
+        ('stun.l.google.com', 19302),    
         ('stun.ekiga.net', 3478),
     ]
     
@@ -121,7 +120,6 @@ class P2PNode:
         self.static_sk = static_sk
         self.dil_pk = dil_pk
         
-        # 计算本节点的身份指纹
         self.node_id = hashlib.sha256(dil_pk).hexdigest()[:16] if dil_pk else ""
         
         self.stun_client = STUNClient(self.sock)
@@ -132,21 +130,15 @@ class P2PNode:
         self.peer_addr = None
         self.session_id = 0
         self.on_physically_connected: Optional[Callable] = None
-        
-        # 【物理寻址表】：记录 物理坐标(IP, Port) -> SecureLink 实例
+
         self.secure_links: Dict[Tuple[str, int], SecureLink] = {}
-        
-        # 【逻辑路由表】：记录 真实身份 ID -> 物理坐标(IP, Port)
-        # 注意：只有在双向认证完成后，节点才会被加入此表
+
         self.connected_peers: Dict[str, Tuple[str, int]] = {}
         
-        # 实例化安全路由器
         self.router = AppRouter()
         
-        # UI回调
         self.ui_callback = None
         
-        # 线程安全锁
         self._lock = threading.Lock()
     
     @property
@@ -177,10 +169,8 @@ class P2PNode:
         print(f"[P2P] ✓ 节点已启动在 {self.host}:{self.port}")
 
     def stop(self):
-        """安全停止节点，并释放所有信道挂载的守护线程"""
         self.running = False
         
-        # 通知所有信道关闭心跳线程
         for link in self.secure_links.values():
             if hasattr(link, 'stop'):
                 link.stop()
@@ -196,8 +186,7 @@ class P2PNode:
         print(f"[P2P] ✓ 邀请码解析成功: {target_info}")
         self.session_id = session_id
         self.punch_state = PunchState.PUNCHING
-        
-        # 【核心修改】将解析出的对方指纹保存，而不是完整的公钥
+
         self.target_peer_fp = target_info.get('fp', "")
         print(f"[P2P] 对方公钥指纹: {self.target_peer_fp}")
         
@@ -320,7 +309,6 @@ class P2PNode:
         self.peer_addr = addr
         
         if addr not in self.secure_links:
-            # 根据角色判断是否需要使用提取出的指纹
             peer_fp = getattr(self, 'target_peer_fp', "") if role == 'client' else ""
             print(f"[P2P] 使用对方指纹: {peer_fp if peer_fp else '(无)'}")
             
@@ -343,7 +331,6 @@ class P2PNode:
                 print(f"[P2P] 客户端发起安全握手...")
                 link.initiate_security_handshake()
                 
-                # 注册新API的回调钩子（用于新版SecureLink）
                 if hasattr(link, 'on_link_established'):
                     link.on_link_established = self._on_link_established
                 if hasattr(link, 'on_app_data_received'):
@@ -352,39 +339,22 @@ class P2PNode:
                     link.on_link_closed = self._on_link_closed
 
     def set_ui_callback(self, cb):
-        """设置UI回调函数"""
         self.ui_callback = cb
 
-    # ==========================================
-    # SecureLink 的回调钩子实现 (第三阶段核心)
-    # ==========================================
 
     def _on_link_established(self, peer_addr: tuple, verified_node_id: str):
-        """
-        【钩子 1】：当底层 1.5-RTT 双向认证彻底成功时触发。
-        在此之前，该节点对业务层完全隐身。
-        """
         with self._lock:
-            # 将物理坐标锚定到真实的逻辑身份上
             self.connected_peers[verified_node_id] = peer_addr
             
         logging.info(f"[P2PNode] 节点 {verified_node_id} (@{peer_addr}) 已完成双向认证，正式加入安全路由表。")
         
-        # 通知 UI 更新连接列表
         if self.ui_callback:
             self.ui_callback('peer_connected', verified_node_id)
 
     def _on_app_data_received(self, verified_node_id: str, plaintext: bytes):
-        """
-        【钩子 2】：当底层信道解密出一段合法的业务明文时触发。
-        """
-        # 直接将密码学锚定的真实 ID 和明文移交给 AppRouter 进行路由
         self.router.route_message(verified_node_id, plaintext)
 
     def _on_link_closed(self, peer_addr: tuple, verified_node_id: str):
-        """
-        【钩子 3】：当链路物理断开或由于密码验证失败而熔断时触发。
-        """
         with self._lock:
             if peer_addr in self.secure_links:
                 del self.secure_links[peer_addr]
@@ -396,17 +366,9 @@ class P2PNode:
         if self.ui_callback and verified_node_id:
             self.ui_callback('peer_disconnected', verified_node_id)
 
-    # ==========================================
-    # 业务报文发送控制
-    # ==========================================
     
     def send_message(self, target_node_id: str, msg: AppMessage):
-        """
-        发送业务报文给指定的对端节点。
-        只能发给已完成双向认证的节点，并且强制修正发件人 ID 为本机 ID。
-        """
         with self._lock:
-            # 严格拦截：不允许向未认证或伪造的节点发送任何业务数据
             if target_node_id not in self.connected_peers:
                 logging.error(f"[P2PNode] 拒绝发送：节点 {target_node_id} 不在安全路由表中 (未连接或未认证)。")
                 return
@@ -415,9 +377,7 @@ class P2PNode:
             link = self.secure_links.get(peer_addr)
         
         if link:
-            # 强制规范化自身发出去的身份，保证协议一致性
             if isinstance(msg, AppMessageV2):
-                # AppMessageV2 是 dataclass，需要创建新实例
                 msg = AppMessageV2(
                     cmd=msg.cmd,
                     sender_id=self.node_id,
@@ -425,9 +385,7 @@ class P2PNode:
                 )
             else:
                 msg.sender_id = self.node_id
-            # 将序列化后的字节流交由隔离墙内层的 AES-GCM 发送
             if hasattr(link, 'send_app_data'):
                 link.send_app_data(msg.encode())
             elif hasattr(link, 'send_reliable'):
-                # 旧版API兼容
                 link.send_reliable(msg.encode())

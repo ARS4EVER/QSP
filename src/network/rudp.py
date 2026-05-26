@@ -1,16 +1,12 @@
 """
 src/network/rudp.py
 [Phase 3 Refactor] 可靠 UDP 传输核心引擎
-彻底移除冗余的 RUDPSocket 包装，仅保留 SACK 滑动窗口与快速重传逻辑，交由 SecureLink 统一调度。
 """
 import time
 import threading
 from typing import Dict, List, Tuple
 
 class RUDPConnection:
-    """
-    维护单个 P2P 节点的可靠传输上下文（滑动窗口与 SACK 状态机）
-    """
     def __init__(self, session_id: int):
         self.session_id = session_id
         

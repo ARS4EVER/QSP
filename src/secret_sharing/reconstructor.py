@@ -10,7 +10,6 @@ class SecretReconstructor:
         secret = bytearray(secret_len)
         xs = [s[0] for s in shares]
 
-        # 核心优化：预计算拉格朗日插值基底系数，复用于整个块的所有字节
         basis_coeffs = []
         for i, x_i in enumerate(xs):
             num, den = 1, 1
@@ -20,7 +19,6 @@ class SecretReconstructor:
                     den = gf_mul(den, x_i ^ x_j) # GF(256) 中加减法就是异或
             basis_coeffs.append(gf_div(num, den))
 
-        # O(N) 的极速向量运算还原
         for byte_idx in range(secret_len):
             val = 0
             for i in range(t):
