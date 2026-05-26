@@ -6,7 +6,6 @@ from .gf256 import gf_mul
 class SecretSplitter:
     @classmethod
     def split_secret(cls, secret: bytes, t: int, n: int) -> List[Tuple[int, bytes]]:
-        # 使用 bytearray 矩阵化操作，避免频繁创建字节串
         shares = [bytearray(len(secret)) for _ in range(n)]
         
         for byte_idx, byte_val in enumerate(secret):
