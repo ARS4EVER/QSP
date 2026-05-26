@@ -99,11 +99,9 @@ class MainWindow(ctk.CTk):
         
         self.show_net_tab()
         self.update_status("系统初始化完成")
-        
-        # 保存原始的服务端连接回调
+
         self._original_on_connected = None
-        
-        # 设置统一的连接回调
+
         def on_any_connected(addr):
             self.connected_peers[addr] = True
             self.ui_bridge.run_in_main_thread(
@@ -112,9 +110,7 @@ class MainWindow(ctk.CTk):
                 text_color="#2FA572"
             )
             self.ui_bridge.safe_update_net_status(f"安全链接建立: {addr}", "#2FA572")
-            # 设置数据接收回调
             if hasattr(self.p2p_node, 'secure_links') and addr in self.p2p_node.secure_links:
-                # 使用新版回调，确保数据走正确的协议解析路径
                 self.p2p_node.secure_links[addr].on_app_data_received = lambda node_id, data: \
                     self.p2p_node.router.route_message(node_id, data)
         
@@ -130,7 +126,6 @@ class MainWindow(ctk.CTk):
         from src.core.recovery_participant import RecoveryParticipant
         
         self.ui_bridge = UIBridge(self)
-        # 使用 P2PNode 内部的 router，保持一致性
         self.p2p_node.router.ui_invoker = self.ui_bridge.run_in_main_thread
         
         from src.config import SHARES_DIR
@@ -142,17 +137,14 @@ class MainWindow(ctk.CTk):
             self.destroy()
             return
 
-        # VaultCrypto 使用默认的 KEYS_DIR 存放盐值和验证器
         self.vault_crypto = VaultCrypto(vault_password)
         # BackupManager 和 RecoveryManager 使用 SHARES_DIR 存放分片，并共享 vault_crypto 实例
         self.backup_mgr = BackupManager(p2p_node=self.p2p_node, vault_crypto=self.vault_crypto, vault_dir=SHARES_DIR)
         self.recovery_mgr = RecoveryManager(p2p_node=self.p2p_node, vault_crypto=self.vault_crypto, vault_dir=SHARES_DIR)
-        
-        # 创建恢复接收端（份额持有方）
+
         self.recovery_participant = RecoveryParticipant(p2p_node=self.p2p_node, vault_crypto=self.vault_crypto)
         self.recovery_participant.register_handlers()
-        
-        # 向 P2PNode 的 router 注册处理器
+
         self.p2p_node.router.register_handler(AppCmdV2.SHARE_PUSH, self.backup_mgr.handle_incoming_share)
         self.p2p_node.router.register_handler(AppCmdV2.PULL_REQ, self.recovery_mgr.handle_pull_request)
         self.p2p_node.router.register_handler(AppCmdV2.PULL_RESP, self.recovery_mgr.handle_pull_response)
@@ -195,8 +187,7 @@ class MainWindow(ctk.CTk):
             from src.crypto_lattice.encryptor import KyberKEM
             
             self.kyber_pk, self.kyber_sk = KyberKEM.generate_keypair()
-            
-            # 使用 app 中已有的身份，不要重新生成
+
             self.dil_pk = self.app.keypair["pk"]
             self.dil_sk = self.app.keypair["sk"]
             
@@ -400,11 +391,8 @@ class MainWindow(ctk.CTk):
         
         def do_connect():
             try:
-                # 【核心修改】移除了报错的 target_peer_pk 提取逻辑
                 self.p2p_node.static_sk = self.dil_sk
                 self.p2p_node._is_initiator = True
-                
-                # 底层的 connect_via_invite 会自动提取指纹(fp)并启动打洞
                 self.p2p_node.connect_via_invite(code, 1000)
                 
             except Exception as e:
