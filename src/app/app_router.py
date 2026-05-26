@@ -12,17 +12,11 @@ from .app_protocol import AppMessage, AppCmd, AppMessageV2, AppCmdV2
 
 
 class AppRouter:
-    """
-    QSP 应用层安全路由器 (C10 路由隔离重构版)
-    负责解析解密后的业务明文，并将其分发给对应的业务模块。
-    """
     def __init__(self, ui_invoker: Optional[Callable] = None):
-        # 路由表映射：支持新旧两种协议
         self.handlers: Dict = {}  # 兼容 AppCmd 和 AppCmdV2
         self.ui_invoker = ui_invoker
 
     def register_handler(self, cmd: AppCmd, handler: Callable):
-        """注册特定指令的应用层回调函数"""
         self.handlers[cmd] = handler
 
     def route_message(self, verified_source_id: str, payload: bytes):
@@ -35,22 +29,17 @@ class AppRouter:
         :param payload: AES-GCM 解密后的应用层业务流
         """
         try:
-            # 1. 使用新版协议反序列化 JSON 报文
             msg = AppMessageV2.decode(payload)
 
-            # 2. 【强制身份覆写机制】：绝不信任报文自称的身份
             if msg.sender_id != verified_source_id:
                 logging.warning(
                     f"[Security] 拦截到身份伪造尝试！"
                     f"报文自称发送者为 {msg.sender_id}，但底层密码学验证其真实身份为 {verified_source_id}。"
                     f"已强制修正为真实身份！"
                 )
-                # 强行覆盖，使得后续业务逻辑 (如份额校验、请求响应) 绝对使用真实的节点 ID
                 msg.sender_id = verified_source_id
 
-            # 3. 安全分发给对应的业务处理器
             if msg.cmd in self.handlers:
-                # 注意：我们显式地把 verified_source_id 作为第一参数传给处理器
                 if self.ui_invoker:
                     self.ui_invoker(self.handlers[msg.cmd], verified_source_id, msg)
                 else:
@@ -64,14 +53,7 @@ class AppRouter:
             logging.error(f"[AppRouter] 路由分发时发生系统异常: {e}")
             traceback.print_exc()
 
-    # ==========================================
-    # 旧版API兼容层
-    # ==========================================
     def dispatch_network_data(self, peer_addr: Tuple[str, int], raw_data: bytes):
-        """
-        旧版API：向后兼容的网络数据分发方法
-        注意：此方法没有底层认证的身份信息，安全性较低
-        """
         try:
             msg = AppMessage.unpack(raw_data)
             
