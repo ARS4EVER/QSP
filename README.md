@@ -70,10 +70,10 @@ QSP是一个基于格密码学的综合性安全系统，专注于提供抗量�
 	<tbody>
 		<tr>
             <td align="center">
-                <a href="https://github.com/amonadam">
-                    <img src="https://avatars.githubusercontent.com/u/164615153?v=4" width="50;" alt="amonadam"/>
+                <a href="https://github.com/AlphaSheeran">
+                    <img src="https://avatars.githubusercontent.com/u/144607354?v=4" width="50;" alt="AlphaSheeran"/>
                     <br />
-                    <sub><b>amonadam</b></sub>
+                    <sub><b>AlphaSheeran</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -91,6 +91,13 @@ QSP是一个基于格密码学的综合性安全系统，专注于提供抗量�
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/amonadam">
+                    <img src="https://avatars.githubusercontent.com/u/164615153?v=4" width="50;" alt="amonadam"/>
+                    <br />
+                    <sub><b>amonadam</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/StarMike-code">
                     <img src="https://avatars.githubusercontent.com/u/182243318?v=4" width="50;" alt="StarMike-code"/>
                     <br />
@@ -104,6 +111,8 @@ QSP是一个基于格密码学的综合性安全系统，专注于提供抗量�
                     <sub><b>Martin8edg</b></sub>
                 </a>
             </td>
+		</tr>
+		<tr>
             <td align="center">
                 <a href="https://github.com/nicolosshit">
                     <img src="https://avatars.githubusercontent.com/u/269751672?v=4" width="50;" alt="nicolosshit"/>
@@ -111,8 +120,6 @@ QSP是一个基于格密码学的综合性安全系统，专注于提供抗量�
                     <sub><b>nicolosshit</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/IsAlPhA77">
                     <img src="https://avatars.githubusercontent.com/u/153442774?v=4" width="50;" alt="IsAlPhA77"/>
@@ -125,13 +132,6 @@ QSP是一个基于格密码学的综合性安全系统，专注于提供抗量�
                     <img src="https://avatars.githubusercontent.com/u/203961430?v=4" width="50;" alt="kan-ner"/>
                     <br />
                     <sub><b>kan-ner</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/AlphaSheeran">
-                    <img src="https://avatars.githubusercontent.com/u/144607354?v=4" width="50;" alt="AlphaSheeran"/>
-                    <br />
-                    <sub><b>AlphaSheeran</b></sub>
                 </a>
             </td>
             <td align="center">
