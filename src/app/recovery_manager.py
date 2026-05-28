@@ -8,7 +8,7 @@ import json
 import hashlib
 import time
 import base64
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional, Callable
 
 from src.app.app_protocol import AppMessage, AppCmd, build_challenge_req, AppMessageV2, AppCmdV2
 from src.secret_sharing.reconstructor import SecretReconstructor
@@ -22,8 +22,9 @@ except ImportError:
 
 
 class RecoveryManager:
-    CHUNK_SIZE = 512
-    ENCRYPTED_CHUNK_SIZE = 540
+    BLOCK_SIZE = 1024 * 1024  
+    FRAGMENT_SIZE = 1024      
+    ENCRYPTED_CHUNK_SIZE = 0  
 
     def __init__(self, p2p_node, vault_crypto=None, vault_dir: str = "./vault", vault_password: str = None):
         self.p2p_node = p2p_node
@@ -39,16 +40,24 @@ class RecoveryManager:
         else:
             raise ValueError("必须提供 vault_crypto 或 vault_password 参数")
             
+        self.frag_buffers = {}
+        
         self.active_manifests: Dict[str, dict] = {}
         self.pending_challenges: Dict[str, dict] = {}
         self.requester_private_key = None
         self.requester_public_key = None
         
-        self.on_progress_update = None  
+        self.on_progress_update: Optional[Callable] = None  
         self.on_recovery_success = None 
         self.on_recovery_failed = None
         
         self._init_crypto_keys()
+        self._compute_encrypted_chunk_size()
+
+    def _compute_encrypted_chunk_size(self):
+        dummy_data = b'\0' * self.BLOCK_SIZE
+        dummy_encrypted = self.vault_crypto.encrypt_chunk(dummy_data)
+        self.ENCRYPTED_CHUNK_SIZE = len(dummy_encrypted)
 
     def _init_crypto_keys(self):
         try:
@@ -91,6 +100,14 @@ class RecoveryManager:
                     continue
         return share_indices
 
+    def _update_progress(self, file_hash: str, processed: int, total: int):
+        if self.on_progress_update:
+            manifest = self.active_manifests.get(file_hash)
+            if manifest:
+                t = manifest.get("t", 1)
+                progress = (processed / total) * 100
+                self.on_progress_update(file_hash, processed, total, progress, "计算中...")
+
     def execute_recovery(self, manifest_path: str):
         if not os.path.exists(manifest_path):
             raise FileNotFoundError("Manifest 清单文件不存在！")
@@ -106,7 +123,7 @@ class RecoveryManager:
         current_shares = len(local_share_indices)
         
         if self.on_progress_update:
-            self.on_progress_update(file_hash, current_shares, t)
+            self.on_progress_update(file_hash, current_shares, t, current_shares / t * 100, "准备中...")
 
         if current_shares >= t:
             self._try_reconstruct_streaming(file_hash, local_share_indices[:t])
@@ -143,7 +160,7 @@ class RecoveryManager:
         if msg.cmd != AppCmdV2.CHALLENGE_RESP:
             return
             
-        requester_id = msg.sender_id  # 这是请求方的节点ID
+        requester_id = msg.sender_id
         nonce = msg.payload.get("nonce")
         
         if not nonce:
@@ -152,7 +169,7 @@ class RecoveryManager:
             
         pending = self.pending_challenges.get(requester_id)
         if not pending:
-            print(f"[Security] 收到未知节点 {requester_id} 的挑战响应，可能已超时或重复")
+            print(f"[Security] 收到未知节点 {requester_id} 的挑战响应")
             for key, value in list(self.pending_challenges.items()):
                 if abs(time.time() - value.get("timestamp", 0)) < 300:
                     pending = value
@@ -220,95 +237,151 @@ class RecoveryManager:
                 if not encrypted_chunk: break
                 
                 try:
+                    # 解密得到1MB的原始份额数据
                     chunk_data = self.vault_crypto.decrypt_chunk(encrypted_chunk)
                 except Exception as e:
                     print(f"[Vault] 解析本地份额失败，拒绝传输: {e}")
                     break
                 
-                resp_payload = {
-                    "file_hash": file_hash,
-                    "share_index": share_idx,
-                    "share_data_b64": base64.b64encode(chunk_data).decode('utf-8'),
-                    "chunk_index": chunk_idx,
-                    "total_chunks": total_chunks
-                }
-                resp_msg = AppMessageV2(
-                    cmd=AppCmdV2.PULL_RESP,
-                    sender_id=self.p2p_node.node_id,
-                    payload=resp_payload
-                )
-                self.p2p_node.secure_link.send_reliable(resp_msg.encode())
+                # 计算当前1MB份额需要被切割成多少个1KB的网络碎片
+                total_frags = (len(chunk_data) + self.FRAGMENT_SIZE - 1) // self.FRAGMENT_SIZE
                 
-                while len(self.p2p_node.secure_link.rudp.unacked_packets) > 80:
-                    time.sleep(0.01)
+                for frag_idx in range(total_frags):
+                    # 提取1KB碎片载荷
+                    start_pos = frag_idx * self.FRAGMENT_SIZE
+                    end_pos = start_pos + self.FRAGMENT_SIZE
+                    frag_data = chunk_data[start_pos:end_pos]
+                    
+                    resp_payload = {
+                        "file_hash": file_hash,
+                        "share_index": share_idx,
+                        "chunk_index": chunk_idx,
+                        "total_chunks": total_chunks,
+                        "frag_index": frag_idx,
+                        "total_frags": total_frags
+                    }
+                    resp_msg = AppMessageV2(
+                        cmd=AppCmdV2.PULL_RESP,
+                        sender_id=self.p2p_node.node_id,
+                        payload=resp_payload,
+                        raw_payload=frag_data
+                    )
+                    self.p2p_node.secure_link.send_reliable(resp_msg.encode())
+                    
+                    secure_link = self.p2p_node.secure_link
+                    cc = getattr(secure_link, 'cc', None) or getattr(secure_link, 'congestion_control', None)
+                    cwnd_packets = max(10, cc.get_cwnd_packets()) if cc else 100
+                    secure_link.rudp.wait_for_window(cwnd_packets)
 
     def handle_pull_response(self, peer_addr: tuple, msg: AppMessageV2):
+        """处理拉取响应（双层切片接收端：碎片内存拼装，单次大块落盘）"""
         if msg.cmd != AppCmdV2.PULL_RESP: return
 
         file_hash = msg.payload.get("file_hash")
         share_idx = msg.payload.get("share_index")
-        share_data_b64 = msg.payload.get("share_data_b64")
+
+        share_data_frag = msg.raw_payload
         
-        if not file_hash or share_idx is None or not share_data_b64:
+        if not share_data_frag and "share_data_b64" in msg.payload:
+            try:
+                share_data_frag = base64.b64decode(msg.payload["share_data_b64"])
+            except Exception as e:
+                print(f"[Recovery] Base64 解码失败: {e}")
+                return
+        elif not share_data_frag and "share_data" in msg.payload:
+            share_data_frag = msg.payload["share_data"]
+        
+        if not file_hash or share_idx is None or not share_data_frag:
             print(f"[Recovery] 拉取响应缺少必要字段: file_hash={file_hash}, share_idx={share_idx}")
             return
-        
-        try:
-            share_data = base64.b64decode(share_data_b64)
-        except Exception as e:
-            print(f"[Recovery] Base64 解码失败: {e}")
-            return
-        
-        if share_idx in self.load_local_shares(file_hash): return
-        
+
         chunk_index = msg.payload.get("chunk_index", 0)
         total_chunks = msg.payload.get("total_chunks", 1)
-        
-        part_path = os.path.join(self.vault_dir, f"{file_hash}_share_{share_idx}.part")
-        meta_path = os.path.join(self.vault_dir, f"{file_hash}_share_{share_idx}.meta")
-        
-        received_chunks = set()
-        if os.path.exists(meta_path):
-            try:
-                with open(meta_path, "r") as f:
-                    meta = json.load(f)
-                    received_chunks = set(meta.get("received", []))
-            except Exception:
-                pass
-                
-        if chunk_index in received_chunks:
-            return 
+        frag_index = msg.payload.get("frag_index", 0)
+        total_frags = msg.payload.get("total_frags", 1)
+
+        buf_key = f"{file_hash}_{share_idx}_{chunk_index}"
+
+        if buf_key not in self.frag_buffers:
+            self.frag_buffers[buf_key] = {
+                "frags": {},
+                "received": 0,
+                "total": total_frags
+            }
             
-        encrypted_data = self.vault_crypto.encrypt_chunk(share_data)
+        buf = self.frag_buffers[buf_key]
+
+        if frag_index not in buf["frags"]:
+            buf["frags"][frag_index] = share_data_frag
+            buf["received"] += 1
+
+        if buf["received"] == buf["total"]:
+            full_share_data = b"".join(buf["frags"][i] for i in range(buf["total"]))
+
+            del self.frag_buffers[buf_key]
+
+            encrypted_data = self.vault_crypto.encrypt_chunk(full_share_data)
             
-        mode = "r+b" if os.path.exists(part_path) else "wb"
-        with open(part_path, mode) as f:
-            f.seek(chunk_index * self.ENCRYPTED_CHUNK_SIZE)
-            f.write(encrypted_data)
+            part_path = os.path.join(self.vault_dir, f"{file_hash}_share_{share_idx}.part")
+            meta_path = os.path.join(self.vault_dir, f"{file_hash}_share_{share_idx}.meta")
+
+            received_chunks = set()
+            if os.path.exists(meta_path):
+                try:
+                    with open(meta_path, "r") as f:
+                        meta = json.load(f)
+                        received_chunks = set(meta.get("received", []))
+                except Exception:
+                    pass
             
-        received_chunks.add(chunk_index)
-        
-        with open(meta_path, "w") as f:
-            json.dump({
-                "total_chunks": total_chunks, 
-                "received": list(received_chunks)
-            }, f)
-            
-        if len(received_chunks) >= total_chunks:
-            dat_path = os.path.join(self.vault_dir, f"{file_hash}_share_{share_idx}.dat")
-            os.rename(part_path, dat_path)
-            os.remove(meta_path)
-            print(f"[Vault] 资产份额 {share_idx} 已接收并本地加密保存")
-            
-            if file_hash in self.active_manifests:
-                t = self.active_manifests[file_hash]["t"]
+            received_chunks.add(chunk_index)
+
+            mode = "r+b" if os.path.exists(part_path) else "wb"
+            with open(part_path, mode) as f:
+                f.seek(chunk_index * self.ENCRYPTED_CHUNK_SIZE)
+                f.write(encrypted_data)
+
+            with open(meta_path, "w") as f:
+                json.dump({
+                    "total_chunks": total_chunks,
+                    "received": list(received_chunks)
+                }, f)
+
+            if self.on_progress_update and file_hash in self.active_manifests:
+                manifest = self.active_manifests[file_hash]
+                t = manifest["t"]
                 local_indices = self.load_local_shares(file_hash)
+                progress = (len(received_chunks) / total_chunks) * 100 if total_chunks > 0 else 0
+                self.on_progress_update(file_hash, len(local_indices), t, progress, "计算中...")
+
+            if len(received_chunks) >= total_chunks:
+                dat_path = os.path.join(self.vault_dir, f"{file_hash}_share_{share_idx}.dat")
+
+                if os.path.exists(dat_path):
+                    try:
+                        os.remove(dat_path)
+                        print(f"[Vault] 已清理旧的份额文件: {os.path.basename(dat_path)}")
+                    except Exception as e:
+                        print(f"[Vault] 警告：无法删除旧份额文件: {e}")
+
+                os.rename(part_path, dat_path)
+
+                try:
+                    os.remove(meta_path)
+                except Exception as e:
+                    print(f"[Vault] 警告：无法删除元数据文件: {e}")
                 
-                if self.on_progress_update:
-                    self.on_progress_update(file_hash, len(local_indices), t)
+                print(f"[Vault] 资产份额 {share_idx} 已接收并本地加密保存")
+                
+                if file_hash in self.active_manifests:
+                    t = self.active_manifests[file_hash]["t"]
+                    local_indices = self.load_local_shares(file_hash)
                     
-                if len(local_indices) >= t:
-                    self._try_reconstruct_streaming(file_hash, local_indices[:t])
+                    if self.on_progress_update:
+                        self.on_progress_update(file_hash, len(local_indices), t, len(local_indices)/t*100, "准备中...")
+                        
+                    if len(local_indices) >= t:
+                        self._try_reconstruct_streaming(file_hash, local_indices[:t])
 
     def _try_reconstruct_streaming(self, file_hash: str, share_indices: List[int]):
         manifest = self.active_manifests.get(file_hash)
@@ -328,6 +401,9 @@ class RecoveryManager:
                 file_handles.append((idx, open(path, "rb")))
                 
             hasher = hashlib.sha256()
+            total_size = manifest.get("file_size", 0)
+            processed_size = 0
+            original_size = manifest.get("file_size", 0)
             
             with open(restored_path, "wb") as out_f:
                 while True:
@@ -340,16 +416,30 @@ class RecoveryManager:
                                 chunk_shares.append((idx, chunk))
                             except Exception as e:
                                 raise ValueError(f"金库数据解密失败: {e}")
-                            
+                                
                     if len(chunk_shares) < t or len(chunk_shares[0][1]) == 0:
                         break 
                         
                     recovered_chunk = SecretReconstructor.reconstruct(chunk_shares)
+
+                    bytes_remaining = original_size - processed_size
+                    actual_data_length = min(len(recovered_chunk), bytes_remaining)
                     
                     out_f.write(recovered_chunk)
-                    hasher.update(recovered_chunk)
+
+                    hasher.update(recovered_chunk[:actual_data_length])
                     
+                    processed_size += len(recovered_chunk)
+                    if self.on_progress_update:
+                        progress = min(min(processed_size, original_size) / original_size * 100, 100) if original_size > 0 else 0
+                        self.on_progress_update(file_hash, len(share_indices), t, progress, "恢复中...")
+                
             for _, fh in file_handles: fh.close()
+
+            if os.path.exists(restored_path):
+                with open(restored_path, "r+b") as f:
+                    if original_size is not None:
+                        f.truncate(original_size)
             
             if hasher.hexdigest() != manifest["original_hash"]:
                 raise ValueError("数据完整性受损：哈希校验不匹配")
