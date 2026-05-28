@@ -80,3 +80,4 @@ class UIBridge:
                 except Exception:
                     pass
         self.run_in_main_thread(_update)
+        
