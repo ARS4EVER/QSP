@@ -41,7 +41,6 @@ class MainWindow(ctk.CTk):
             except:
                 pass
         
-        # 初始化应用层 (创建 UIBridge 等)
         self._init_app_layer()
         
         self.grid_rowconfigure(0, weight=1)
@@ -101,7 +100,6 @@ class MainWindow(ctk.CTk):
         self.main_frame.grid_columnconfigure(0, weight=1)
         self.main_frame.grid_rowconfigure(0, weight=1)
 
-        # 核心修改：预先初始化所有页面 Frame，利用 grid 将它们堆叠在一起
         self.net_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         self.backup_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         self.recovery_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
@@ -109,22 +107,18 @@ class MainWindow(ctk.CTk):
         for frame in (self.net_frame, self.backup_frame, self.recovery_frame):
             frame.grid(row=0, column=0, sticky="nsew")
             
-        # 一次性构建所有界面的 UI 组件，避免后续销毁
         self._build_net_tab()
         self._build_backup_tab()
         self._build_recovery_tab()
         
-        # 默认展示网络页面
         self.show_net_tab()
         self.update_status("系统初始化完成")
 
         self._original_on_connected = None
 
         def on_any_connected(addr):
-            # 将地址转换为统一的字符串格式，避免重复计数
             addr_str = str(addr)
             
-            # 检查是否已连接
             if addr_str in self.connected_peers:
                 print(f"[MainWindow] 节点 {addr} 已连接，跳过重复计数")
                 return
@@ -132,7 +126,6 @@ class MainWindow(ctk.CTk):
             self.connected_peers[addr_str] = True
             print(f"[MainWindow] 新增连接节点: {addr}")
             
-            # 因使用堆叠布局，组件永不被销毁，此处回调永远安全有效
             self.ui_bridge.run_in_main_thread(
                 self.lbl_peer_list.configure,
                 text=f"已连接节点: {len(self.connected_peers)}",
@@ -143,24 +136,20 @@ class MainWindow(ctk.CTk):
                 self.p2p_node.secure_links[addr].on_app_data_received = lambda node_id, data: \
                     self.p2p_node.router.route_message(node_id, data)
             
-            # 延迟发送清单公钥，确保安全链接完全建立
             threading.Thread(target=self._delayed_send_manifest_key, args=(addr,), daemon=True).start()
         
         self.p2p_node.on_physically_connected = on_any_connected
         
-        # 注册连接断开回调
         if hasattr(self.p2p_node, 'ui_callback'):
             original_callback = self.p2p_node.ui_callback
             
             def on_peer_disconnected(event, node_id):
                 if event == 'peer_disconnected':
-                    # 从已连接列表中移除
                     for addr_str in list(self.connected_peers.keys()):
                         if node_id in addr_str or addr_str in node_id:
                             del self.connected_peers[addr_str]
                             print(f"[MainWindow] 节点 {node_id} 已断开连接")
                             break
-                    # 更新UI显示
                     self.ui_bridge.run_in_main_thread(
                         self.lbl_peer_list.configure,
                         text=f"已连接节点: {len(self.connected_peers)}",
@@ -170,12 +159,10 @@ class MainWindow(ctk.CTk):
             self.p2p_node.ui_callback = on_peer_disconnected
     
     def _delayed_send_manifest_key(self, peer_addr):
-        """延迟发送清单公钥，确保安全链接完全建立"""
-        time.sleep(1)  # 延迟1秒确保安全握手完成
+        time.sleep(1)
         self._send_manifest_public_key(peer_addr)
     
     def _send_manifest_public_key(self, peer_addr):
-        """发送清单公钥给已连接的节点"""
         try:
             from src.app.app_protocol import AppMessageV2, AppCmdV2
             import base64
@@ -192,10 +179,8 @@ class MainWindow(ctk.CTk):
                     payload=payload
                 )
                 
-                # 尝试多种方式发送
                 sent = False
                 
-                # 方式1：通过 secure_links 发送
                 if hasattr(self.p2p_node, 'secure_links') and peer_addr in self.p2p_node.secure_links:
                     link = self.p2p_node.secure_links[peer_addr]
                     if hasattr(link, 'send_reliable'):
@@ -203,7 +188,6 @@ class MainWindow(ctk.CTk):
                         print(f"[MainWindow] 已发送清单公钥给 {peer_addr}")
                         sent = True
                 
-                # 方式2：通过 secure_link 发送（单连接模式）
                 if not sent and hasattr(self.p2p_node, 'secure_link'):
                     link = self.p2p_node.secure_link
                     if hasattr(link, 'send_reliable'):
@@ -256,7 +240,6 @@ class MainWindow(ctk.CTk):
         self.recovery_mgr.on_recovery_failed = self._on_recovery_failed
 
     def _get_manifest_key_manager(self):
-        """获取清单密钥管理器"""
         if hasattr(self, 'manifest_key_manager') and self.manifest_key_manager is not None:
             return self.manifest_key_manager
         
@@ -268,7 +251,6 @@ class MainWindow(ctk.CTk):
         return None
     
     def _handle_manifest_key_exchange(self, verified_source_id: str, msg):
-        """处理接收到的清单公钥"""
         try:
             import base64
             
@@ -276,13 +258,11 @@ class MainWindow(ctk.CTk):
             if manifest_pk_b64:
                 peer_manifest_pk = base64.b64decode(manifest_pk_b64)
                 
-                # 持久化保存对方的清单公钥（节点身份指纹 -> 清单公钥）
                 manifest_key_manager = self._get_manifest_key_manager()
                 if manifest_key_manager:
                     manifest_key_manager.save_peer_public_key(verified_source_id, peer_manifest_pk)
                     print(f"[MainWindow] 已持久化保存节点 {verified_source_id[:8]} 的清单公钥")
                 
-                # 同时临时保存到安全通道（供当前会话使用）
                 if hasattr(self.p2p_node, 'secure_links'):
                     for addr, link in self.p2p_node.secure_links.items():
                         if hasattr(link, 'channel'):
@@ -292,7 +272,6 @@ class MainWindow(ctk.CTk):
             print(f"[MainWindow] 处理清单公钥失败: {e}")
     
     def _get_manifest_crypto(self):
-        """从金库密码派生清单加密密钥（向后兼容）"""
         if self.manifest_crypto is not None:
             return self.manifest_crypto
         
@@ -352,10 +331,7 @@ class MainWindow(ctk.CTk):
     def update_status(self, message: str, color: str = "gray"):
         self.status_label.configure(text=f"状态: {message}", text_color=color)
 
-    # 移除原有的 clear_main_frame() 方法
-
     def _build_net_tab(self):
-        # 绑定到 net_frame
         ctk.CTkLabel(
             self.net_frame, 
             text="本机专属邀请码 (包含公钥指纹与坐标):", 
@@ -411,7 +387,6 @@ class MainWindow(ctk.CTk):
         self.lbl_peer_list.pack(pady=10)
 
     def _build_backup_tab(self):
-        # 绑定到 backup_frame
         ctk.CTkButton(
             self.backup_frame, 
             text="选择待保护机密文件", 
@@ -521,7 +496,6 @@ class MainWindow(ctk.CTk):
         )
         self.lbl_recovery_status.pack(pady=10)
 
-    # UI 切换与桥接动态绑定
     def show_net_tab(self):
         self.net_frame.tkraise()
         if hasattr(self, 'ui_bridge'):
@@ -558,17 +532,15 @@ class MainWindow(ctk.CTk):
         from src.config import SHARES_DIR, MANIFESTS_DIR
         from cryptography.exceptions import InvalidTag
         
-        # 确保目录存在
         os.makedirs(SHARES_DIR, exist_ok=True)
         os.makedirs(MANIFESTS_DIR, exist_ok=True)
         
-        # 获取 SHARES_DIR 目录下所有的 .enc 文件
         enc_files = glob.glob(os.path.join(SHARES_DIR, "*.enc"))
         print(f"[_refresh_local_manifests] 在 {SHARES_DIR} 中找到 {len(enc_files)} 个 .enc 文件")
         
         display_values = []
         self.manifest_data_map = {}
-        self.manifest_path_map = {}  # 新增：用于存储文件路径
+        self.manifest_path_map = {}
         
         for enc_path in enc_files:
             try:
@@ -580,11 +552,9 @@ class MainWindow(ctk.CTk):
                 with open(enc_path, 'rb') as f:
                     encrypted_data = f.read()
                 
-                # 尝试解密清单
                 decrypted_bytes = None
                 manifest_dict = None
                 
-                # 首先尝试密钥封装机制解密（版本 V3）
                 if len(encrypted_data) > 0 and encrypted_data[0:1] == b'\x03':
                     manifest_key_manager = self._get_manifest_key_manager()
                     if manifest_key_manager:
@@ -594,7 +564,6 @@ class MainWindow(ctk.CTk):
                         except Exception as e:
                             print(f"[_refresh_local_manifests] 清单密钥管理器解密失败: {e}")
                 
-                # 如果版本不对，尝试用 ManifestCrypto 解密（使用金库密码）
                 if not decrypted_bytes:
                     manifest_crypto = self._get_manifest_crypto()
                     if manifest_crypto:
@@ -604,7 +573,6 @@ class MainWindow(ctk.CTk):
                         except Exception as e:
                             print(f"[_refresh_local_manifests] ManifestCrypto 解密失败: {e}")
                 
-                # 如果仍然失败，尝试用 vault_crypto 的清单解密方法
                 if not decrypted_bytes:
                     try:
                         decrypted_bytes = self.vault_crypto.decrypt_manifest(encrypted_data)
@@ -623,24 +591,21 @@ class MainWindow(ctk.CTk):
                     print(f"[_refresh_local_manifests] 成功解析清单 JSON: {filename}")
                 
                 if manifest_dict:
-                    # 兼容旧格式和新格式的字段名
                     name = manifest_dict.get("original_filename", manifest_dict.get("filename", "未知文件"))
                     manifest_file_size = manifest_dict.get("file_size", file_size)
                     display_name = f"{name} ({manifest_file_size} Bytes) - {filename}"
                     
                     display_values.append(display_name)
                     self.manifest_data_map[display_name] = manifest_dict
-                    self.manifest_path_map[display_name] = enc_path  # 保存文件路径
+                    self.manifest_path_map[display_name] = enc_path
                 else:
-                    # 如果无法解密，仍然显示文件名（标记为加密文件）
                     display_name = f"{filename} (加密文件, {file_size} Bytes)"
                     display_values.append(display_name)
-                    self.manifest_path_map[display_name] = enc_path  # 保存文件路径
+                    self.manifest_path_map[display_name] = enc_path
                     print(f"[_refresh_local_manifests] 无法解密文件，仍将其显示在列表中: {filename}")
                 
             except Exception as e:
                 print(f"[_refresh_local_manifests] 处理文件 {enc_path} 时出错: {e}")
-                # 即使出错，仍然尝试只显示文件名
                 try:
                     filename = os.path.basename(enc_path)
                     file_stat = os.stat(enc_path)
@@ -673,7 +638,6 @@ class MainWindow(ctk.CTk):
                 self.manifest_path = self.manifest_path_map[choice]
             self.lbl_manifest.configure(text=f"已验证并锁定机密文件网络清单:\n{choice}", text_color="#2FA572")
         elif hasattr(self, 'manifest_path_map') and choice in self.manifest_path_map:
-            # 这是一个加密文件，未成功解密，但我们仍然保存路径
             self.manifest_path = self.manifest_path_map[choice]
             self.lbl_manifest.configure(text=f"已选择加密清单文件:\n{choice}\n(执行恢复时将尝试解密)", text_color="#E5A50A")
 
@@ -812,7 +776,6 @@ class MainWindow(ctk.CTk):
                     
                     decrypted_bytes = None
                     
-                    # 首先尝试使用清单密钥管理器解密（版本 V3）
                     if len(encrypted_data) > 0 and encrypted_data[0:1] == b'\x03':
                         manifest_key_manager = self._get_manifest_key_manager()
                         if manifest_key_manager:
@@ -821,7 +784,6 @@ class MainWindow(ctk.CTk):
                             except:
                                 pass
                     
-                    # 如果密钥管理器失败，尝试用 ManifestCrypto 解密（使用金库密码）
                     if not decrypted_bytes:
                         manifest_crypto = self._get_manifest_crypto()
                         if manifest_crypto:
@@ -830,7 +792,6 @@ class MainWindow(ctk.CTk):
                             except:
                                 pass
                     
-                    # 如果仍然失败，尝试用 vault_crypto
                     if not decrypted_bytes:
                         try:
                             decrypted_bytes = self.vault_crypto.decrypt_manifest(encrypted_data)
