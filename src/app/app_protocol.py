@@ -1,15 +1,17 @@
 """
 src/app/app_protocol.py
-[Application Phase 1] 应用层传输协议定义
-负责业务指令与二进制数据（如 Shamir 份额）的 JSON/Base64 序列化与反序列化。
+[Application Phase 2] 应用层混合协议定义
+实现 TLV 风格的混合协议：结构化控制指令继续使用 JSON（便于扩展），而庞大的文件块直接作为二进制尾部（Raw Payload）
+
+[Performance Optimization] 彻底剥离应用层协议中对二进制文件块的 Base64 编码与 JSON 序列化
 """
 
 import json
 import struct
 import base64
 from enum import IntEnum, Enum
-from dataclasses import dataclass
 from typing import Any, Dict, Optional
+
 
 class AppCmd(str, Enum):
     SHARE_PUSH = "SHARE_PUSH"
@@ -106,45 +108,88 @@ class AppCmdV2(IntEnum):
     PULL_REQ = 5
     PULL_RESP = 6
     PULL_REJECT = 7
+    MANIFEST_KEY_EXCHANGE = 8  
     CHALLENGE_REQ = 10
     CHALLENGE_RESP = 11
 
 
-@dataclass
 class AppMessageV2:
-    cmd: AppCmdV2
-    sender_id: str
-    payload: Dict[str, Any]
+    def __init__(self, cmd: AppCmdV2, sender_id: str, payload: dict, raw_payload: bytes = b""):
+        self.cmd = cmd
+        self.sender_id = sender_id
+        self.payload = payload or {}
+        # 【新增】承载大体积文件切片的纯二进制载荷，绕过 JSON
+        self.raw_payload = raw_payload  
 
     def encode(self) -> bytes:
-        data = {
-            "cmd": self.cmd.value,
+        """
+        【重构】混合序列化： [4字节 Header长度] + [JSON Header字节] + [二进制 Raw Payload]
+        消除了对大体积数据进行 Base64 转换的算力与内存浪费。
+        """
+        cmd_val = self.cmd.value if isinstance(self.cmd, Enum) else self.cmd
+        header_dict = {
+            "cmd": cmd_val,
             "sender_id": self.sender_id,
             "payload": self.payload
         }
-        return json.dumps(data, separators=(',', ':')).encode('utf-8')
+        
+        header_bytes = json.dumps(header_dict).encode('utf-8')
+        header_length = len(header_bytes)
+        
+        # 使用 !I (大端无符号整数) 打包头部长度
+        return struct.pack('!I', header_length) + header_bytes + self.raw_payload
 
     @classmethod
-    def decode(cls, data: bytes) -> 'AppMessageV2':
-        try:
-            parsed = json.loads(data.decode('utf-8'))
+    def decode(cls, data: bytes):
+        """
+        【重构】反序列化，通过首字节智能判断协议版本，兼容老版本节点。
+        """
+        if not data:
+            raise ValueError("[AppProtocol] 收到空数据包")
             
-            if not all(k in parsed for k in ("cmd", "sender_id", "payload")):
-                raise ValueError("报文缺少必备字段 (cmd, sender_id, payload)")
+        # 兼容性分支1：老版本协议的 payload 直接是一个 JSON 字符串，以 '{' 开头
+        if data[0] == ord('{'):
+            header_dict = json.loads(data.decode('utf-8'))
+            raw_payload = b""
+            # 为兼容老版本，需要将旧格式的 share_data_b64 转换为 raw_payload
+            payload = header_dict.get("payload", {})
+            if "share_data_b64" in payload:
+                raw_payload = base64.b64decode(payload["share_data_b64"])
+                del payload["share_data_b64"]
+                header_dict["payload"] = payload
+        else:
+            # 新版混合协议解析
+            if len(data) < 4:
+                raise ValueError("[AppProtocol] 数据包残缺，无法读取 Header 长度")
                 
-            cmd_val = parsed["cmd"]
-            if not any(cmd_val == item.value for item in AppCmdV2):
+            header_length = struct.unpack('!I', data[:4])[0]
+            if len(data) < 4 + header_length:
+                raise ValueError("[AppProtocol] 数据包长度异常，Header 截断")
+                
+            header_bytes = data[4 : 4 + header_length]
+            header_dict = json.loads(header_bytes.decode('utf-8'))
+            
+            # 提取尾部的纯二进制数据，没有任何多余的解码开销
+            raw_payload = data[4 + header_length :]
+            
+        cmd_val = header_dict.get("cmd")
+        if isinstance(cmd_val, int):
+            cmd = AppCmdV2(cmd_val)
+        else:
+            # 兼容字符串格式的命令
+            for cmd_enum in AppCmdV2:
+                if cmd_enum.name == cmd_val or str(cmd_enum.value) == str(cmd_val):
+                    cmd = cmd_enum
+                    break
+            else:
                 raise ValueError(f"未知的指令代码: {cmd_val}")
                 
-            return cls(
-                cmd=AppCmdV2(cmd_val),
-                sender_id=parsed["sender_id"],
-                payload=parsed["payload"]
-            )
-        except json.JSONDecodeError as e:
-            raise ValueError(f"报文解析失败，非法的 JSON 格式: {e}")
-        except Exception as e:
-            raise ValueError(f"报文结构异常: {e}")
+        return cls(
+            cmd=cmd,
+            sender_id=header_dict.get("sender_id", ""),
+            payload=header_dict.get("payload", {}),
+            raw_payload=raw_payload
+        )
 
 
 def build_challenge_req(sender_id: str) -> AppMessageV2:
