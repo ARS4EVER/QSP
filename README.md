@@ -196,6 +196,7 @@ QSP-main/
 │   │   ├── app_router.py       # 应用层消息路由
 │   │   ├── backup_manager.py   # 资产备份管理器
 │   │   ├── recovery_manager.py # 资产恢复管理器
+│   │   ├── manifest_key_manager.py #清单管理器
 │   │   ├── ui_bridge.py        # UI 桥接器
 │   │   └── vault_crypto.py     # 本地金库加密引擎
 │   ├── core/                  # 核心协议层
