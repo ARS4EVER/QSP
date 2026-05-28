@@ -10,11 +10,121 @@ from cryptography.exceptions import InvalidTag
 from src.config import DATA_DIR, KEYS_DIR 
 
 
+class ManifestCrypto:
+    MANIFEST_SALT = b"QSP_MANIFEST_SALT_V1"
+    KEY_DERIVATION_ITERATIONS = 100000
+    
+    VERSION_V1 = b'\x01'  
+    VERSION_V2 = b'\x02'  
+    VERSION_V3 = b'\x03'  
+    
+    ENCRYPTED_KEY_SIZE = 768 
+
+    def __init__(self, manifest_key: bytes = None):
+
+        if manifest_key is None:
+            self.key = os.urandom(32)
+        else:
+            if isinstance(manifest_key, str):
+                manifest_key = manifest_key.encode('utf-8')
+            if len(manifest_key) != 32:
+                kdf = PBKDF2HMAC(
+                    algorithm=hashes.SHA256(),
+                    length=32,
+                    salt=self.MANIFEST_SALT,
+                    iterations=self.KEY_DERIVATION_ITERATIONS,
+                    backend=default_backend()
+                )
+                self.key = kdf.derive(manifest_key)
+            else:
+                self.key = manifest_key
+        self.aesgcm = AESGCM(self.key)
+
+    @classmethod
+    def generate_new_key(cls):
+        return cls()
+
+    @classmethod
+    def from_key(cls, key: bytes):
+        if len(key) != 32:
+            raise ValueError("清单密钥必须是32字节")
+        return cls(key)
+    
+    @classmethod
+    def from_password(cls, password: str):
+        return cls(password)
+
+    def encrypt_manifest(self, data: bytes) -> bytes:
+        nonce = os.urandom(12)
+        ciphertext_with_tag = self.aesgcm.encrypt(nonce, data, associated_data=None)
+        return nonce + ciphertext_with_tag
+
+    def decrypt_manifest(self, encrypted_data: bytes) -> bytes:
+        if len(encrypted_data) < 28:  
+            raise ValueError("Encrypted manifest is corrupted or too short.")
+        
+        nonce = encrypted_data[:12]
+        ciphertext_with_tag = encrypted_data[12:]
+
+        try:
+            plaintext = self.aesgcm.decrypt(nonce, ciphertext_with_tag, associated_data=None)
+            return plaintext
+        except InvalidTag as e:
+            raise InvalidTag("[ManifestCrypto] 清单解密失败：密钥不匹配或数据损坏！") from e
+
+    @classmethod
+    def encrypt_with_key_encapsulation(cls, data: bytes, recipient_pk: bytes) -> bytes:
+
+        from src.crypto_lattice.encryptor import KyberKEM
+        
+        ciphertext, manifest_key = KyberKEM.encapsulate(recipient_pk)
+        
+
+        crypto = cls.from_key(manifest_key)
+        encrypted_data = crypto.encrypt_manifest(data)
+        
+        result = cls.VERSION_V3 + ciphertext + encrypted_data
+        
+        crypto.destroy()
+        return result
+
+    @classmethod
+    def decrypt_with_key_encapsulation(cls, encrypted_data: bytes, recipient_sk: bytes) -> bytes:
+
+        from src.crypto_lattice.encryptor import KyberKEM
+        
+        if len(encrypted_data) < 1 + cls.ENCRYPTED_KEY_SIZE + 28:
+            raise ValueError("Encrypted manifest is corrupted or too short.")
+        
+        version = encrypted_data[:1]
+        if version != cls.VERSION_V3:
+            raise ValueError(f"不支持的清单版本: {version}")
+        
+        encrypted_key = encrypted_data[1:1 + cls.ENCRYPTED_KEY_SIZE]
+        encrypted_manifest = encrypted_data[1 + cls.ENCRYPTED_KEY_SIZE:]
+
+        manifest_key = KyberKEM.decapsulate(encrypted_key, recipient_sk)
+        
+        crypto = cls.from_key(manifest_key)
+        plaintext = crypto.decrypt_manifest(encrypted_manifest)
+        crypto.destroy()
+        
+        return plaintext
+
+    def get_key(self) -> bytes:
+        return self.key
+
+    def destroy(self):
+        self.key = b""
+        gc.collect()
+
+
 class PasswordAuthError(Exception):
     pass
 
 class VaultCrypto:
     MAGIC_VERIFIER = b"QSP_VAULT_MAGIC_VERIFIER"
+    MANIFEST_SALT = b"QSP_MANIFEST_SALT_V1"
 
     def __init__(self, password: str, salt_path: str = None, verifier_path: str = None, vault_dir: str = None):
         self.salt = None
@@ -148,3 +258,40 @@ class VaultCrypto:
 
     def decrypt_chunk(self, encrypted_chunk: bytes) -> bytes:
         return self.decrypt_data(encrypted_chunk)
+    
+    def encrypt_manifest(self, data: bytes) -> bytes:
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=self.MANIFEST_SALT,
+            iterations=100000,
+            backend=default_backend()
+        )
+        manifest_key = kdf.derive(self.password)
+        aesgcm = AESGCM(manifest_key)
+        nonce = os.urandom(12)
+        ciphertext_with_tag = aesgcm.encrypt(nonce, data, associated_data=None)
+        return nonce + ciphertext_with_tag
+    
+    def decrypt_manifest(self, encrypted_data: bytes) -> bytes:
+        if len(encrypted_data) < 28:
+            raise ValueError("Encrypted manifest is corrupted or too short.")
+        
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=self.MANIFEST_SALT,
+            iterations=100000,
+            backend=default_backend()
+        )
+        manifest_key = kdf.derive(self.password)
+        aesgcm = AESGCM(manifest_key)
+        
+        nonce = encrypted_data[:12]
+        ciphertext_with_tag = encrypted_data[12:]
+        
+        try:
+            plaintext = aesgcm.decrypt(nonce, ciphertext_with_tag, associated_data=None)
+            return plaintext
+        except InvalidTag as e:
+            raise InvalidTag("[VaultCrypto] 清单解密失败：密码错误或清单数据损坏！") from e
