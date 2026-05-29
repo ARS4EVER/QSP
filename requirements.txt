@@ -17,6 +17,6 @@ customtkinter>=5.1.0
 # 其他工具
 pystun3>=1.0.0
 dilithium-py 
-
+msgpack
 kyber-py
 cryptography
