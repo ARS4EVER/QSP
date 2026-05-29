@@ -273,23 +273,38 @@ class MainWindow(ctk.CTk):
             import base64
             
             manifest_pk_b64 = msg.payload.get("manifest_pk")
-            if manifest_pk_b64:
-                peer_manifest_pk = base64.b64decode(manifest_pk_b64)
+            if not manifest_pk_b64:
+                print(f"[MainWindow] ✗ 接收清单公钥失败: 缺少 manifest_pk 字段")
+                return
                 
-                # 持久化保存对方的清单公钥（节点身份指纹 -> 清单公钥）
-                manifest_key_manager = self._get_manifest_key_manager()
-                if manifest_key_manager:
-                    manifest_key_manager.save_peer_public_key(verified_source_id, peer_manifest_pk)
-                    print(f"[MainWindow] 已持久化保存节点 {verified_source_id[:8]} 的清单公钥")
+            peer_manifest_pk = base64.b64decode(manifest_pk_b64)
+            print(f"[MainWindow] ✓ 收到节点 {verified_source_id[:8]} 的清单公钥 ({len(peer_manifest_pk)} bytes)")
+            
+            # 持久化保存对方的清单公钥（节点身份指纹 -> 清单公钥）
+            manifest_key_manager = self._get_manifest_key_manager()
+            if manifest_key_manager:
+                result = manifest_key_manager.save_peer_public_key(verified_source_id, peer_manifest_pk)
+                if result:
+                    print(f"[MainWindow] ✓ 已持久化保存节点 {verified_source_id[:8]} 的清单公钥")
+                else:
+                    print(f"[MainWindow] ✗ 持久化保存节点 {verified_source_id[:8]} 公钥失败")
+            else:
+                print(f"[MainWindow] ⚠ 无法获取清单密钥管理器，公钥将仅临时保存")
                 
-                # 同时临时保存到安全通道（供当前会话使用）
-                if hasattr(self.p2p_node, 'secure_links'):
-                    for addr, link in self.p2p_node.secure_links.items():
-                        if hasattr(link, 'channel'):
-                            link.channel.peer_manifest_pk = peer_manifest_pk
-                            print(f"[MainWindow] 已临时保存对方清单公钥到通道")
+            # 同时临时保存到安全通道（供当前会话使用）
+            saved_to_channel = False
+            if hasattr(self.p2p_node, 'secure_links'):
+                for addr, link in self.p2p_node.secure_links.items():
+                    if hasattr(link, 'channel'):
+                        link.channel.peer_manifest_pk = peer_manifest_pk
+                        saved_to_channel = True
+                        print(f"[MainWindow] ✓ 已临时保存对方清单公钥到通道")
+                        break
+            if not saved_to_channel:
+                print(f"[MainWindow] ⚠ 未找到安全通道，公钥未保存到会话")
+                
         except Exception as e:
-            print(f"[MainWindow] 处理清单公钥失败: {e}")
+            print(f"[MainWindow] ✗ 处理清单公钥失败: {e}")
     
     def _get_manifest_crypto(self):
         """从金库密码派生清单加密密钥（向后兼容）"""
@@ -758,38 +773,68 @@ class MainWindow(ctk.CTk):
                         json.dump(manifest_dict, f)
                     target_path = temp_path
                 elif is_encrypted:
+                    print(f"\n[MainWindow] ========== 开始解密清单 ==========")
+                    print(f"[MainWindow] 清单文件: {manifest_path}")
+                    
                     with open(manifest_path, 'rb') as f:
                         encrypted_data = f.read()
+                    
+                    print(f"[MainWindow] 清单文件大小: {len(encrypted_data)} bytes")
+                    print(f"[MainWindow] 清单文件首字节: 0x{encrypted_data[0]:02x}" if len(encrypted_data) > 0 else "")
                     
                     decrypted_bytes = None
                     
                     # 首先尝试使用清单密钥管理器解密（版本 V3）
                     if len(encrypted_data) > 0 and encrypted_data[0:1] == b'\x03':
+                        print(f"[MainWindow] 检测到 V3 格式清单，尝试用清单密钥管理器解密...")
                         manifest_key_manager = self._get_manifest_key_manager()
                         if manifest_key_manager:
                             try:
                                 decrypted_bytes = manifest_key_manager.decrypt_manifest(encrypted_data)
-                            except:
-                                pass
+                                if decrypted_bytes:
+                                    print(f"[MainWindow] ✓ 清单密钥管理器解密成功")
+                            except Exception as e:
+                                print(f"[MainWindow] ✗ 清单密钥管理器解密失败: {e}")
                     
                     # 如果密钥管理器失败，尝试用 ManifestCrypto 解密（使用金库密码）
                     if not decrypted_bytes:
+                        print(f"[MainWindow] 尝试用金库密码解密...")
                         manifest_crypto = self._get_manifest_crypto()
                         if manifest_crypto:
                             try:
                                 decrypted_bytes = manifest_crypto.decrypt_manifest(encrypted_data)
-                            except:
-                                pass
+                                if decrypted_bytes:
+                                    print(f"[MainWindow] ✓ 金库密码解密成功")
+                            except Exception as e:
+                                print(f"[MainWindow] ✗ 金库密码解密失败: {e}")
                     
                     # 如果仍然失败，尝试用 vault_crypto
                     if not decrypted_bytes:
+                        print(f"[MainWindow] 尝试用通用解密方法...")
                         try:
                             decrypted_bytes = self.vault_crypto.decrypt_manifest(encrypted_data)
-                        except:
+                            if decrypted_bytes:
+                                print(f"[MainWindow] ✓ 通用解密方法1成功")
+                        except Exception as e:
+                            print(f"[MainWindow] 通用解密方法1失败: {e}")
                             try:
                                 decrypted_bytes = self.vault_crypto.decrypt_data(encrypted_data)
-                            except:
-                                raise ValueError("无法解密清单文件，请确认密钥正确！")
+                                if decrypted_bytes:
+                                    print(f"[MainWindow] ✓ 通用解密方法2成功")
+                            except Exception as e:
+                                print(f"[MainWindow] ✗ 通用解密方法2失败: {e}")
+                    
+                    if not decrypted_bytes:
+                        print(f"[MainWindow] =====================================")
+                        print(f"[MainWindow] ❌ 所有解密方法都失败！")
+                        print(f"[MainWindow] 可能原因:")
+                        print(f"[MainWindow]   1. 该清单不是用您的公钥加密的")
+                        print(f"[MainWindow]   2. 金库密码不正确")
+                        print(f"[MainWindow]   3. 清单文件损坏")
+                        print(f"[MainWindow] =====================================\n")
+                        raise ValueError("无法解密清单文件，请确认密钥正确！")
+                    
+                    print(f"[MainWindow] =====================================\n")
                     
                     manifest_dict_from_enc = json.loads(decrypted_bytes.decode('utf-8'))
                     
