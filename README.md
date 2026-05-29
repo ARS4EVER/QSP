@@ -16,9 +16,6 @@
   <a href="https://github.com/ARS4EVER/QSP/stargazers">
     <img alt="Tech Report" src="https://img.shields.io/github/stars/ARS4EVER/QSP.svg?style">
   </a>
-  <a href="https://img.shields.io/github/issues/QSP.svg">
-    <img alt="Demo" src="https://img.shields.io/github/issues/ARS4EVER/QSP.svg?style">
-  </a>
 </p>
 
 <p align="center">
