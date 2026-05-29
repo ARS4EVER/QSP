@@ -124,11 +124,17 @@ class BackupManager:
         file_size = os.path.getsize(filepath)
         total_chunks = max(1, (file_size + self.BLOCK_SIZE - 1) // self.BLOCK_SIZE)
         
+        print(f"\n[BackupManager] ========== 计算原始文件哈希 ==========")
         hasher = hashlib.sha256()
+        chunk_count = 0
         with open(filepath, "rb") as f:
             for chunk in iter(lambda: f.read(4096), b""):
                 hasher.update(chunk)
+                chunk_count += 1
         file_hash = hasher.hexdigest()
+        print(f"[BackupManager] 读取了 {chunk_count} 个 4KB 块")
+        print(f"[BackupManager] 原始文件哈希: {file_hash[:16]}...")
+        print(f"[BackupManager] =====================================\n")
 
         # 加载或初始化进度状态
         progress_state = self._load_progress_state(file_hash, n) if resume else self._load_progress_state(file_hash, n)
@@ -290,29 +296,39 @@ class BackupManager:
         for share_idx, peer_addr in share_distribution.items():
             secure_link = secure_links[peer_addr]
             
+            print(f"\n[BackupManager] ========== 处理节点 {peer_addr} 份额 {share_idx} ==========")
+            
             # 获取该节点的清单加密公钥
             recipient_pk = None
+            pk_source = "未获取"
             
             # a. 首先从安全通道获取（当前会话）
             if hasattr(secure_link, 'channel') and hasattr(secure_link.channel, 'peer_manifest_pk'):
                 recipient_pk = secure_link.channel.peer_manifest_pk
+                pk_source = "安全通道"
             
             # b. 如果当前会话没有，尝试从持久化存储中查找
             if not recipient_pk and self.manifest_key_manager:
                 # 尝试用节点地址查找
                 recipient_pk = self.manifest_key_manager.get_peer_public_key(str(peer_addr))
-                if not recipient_pk and hasattr(secure_link, 'channel') and hasattr(secure_link.channel, 'remote_node_id'):
+                if recipient_pk:
+                    pk_source = f"持久化存储(地址)"
+                elif hasattr(secure_link, 'channel') and hasattr(secure_link.channel, 'remote_node_id'):
                     # 尝试用远程节点ID查找
-                    recipient_pk = self.manifest_key_manager.get_peer_public_key(secure_link.channel.remote_node_id)
+                    remote_node_id = secure_link.channel.remote_node_id
+                    recipient_pk = self.manifest_key_manager.get_peer_public_key(remote_node_id)
+                    if recipient_pk:
+                        pk_source = f"持久化存储(ID)"
             
             # c. 生成用该节点公钥加密的清单
             if recipient_pk and self.manifest_key_manager:
-                print(f"[BackupManager] 使用节点 {peer_addr} 的公钥加密清单")
+                print(f"[BackupManager] ✓ 使用节点 {peer_addr} 的公钥加密清单 (来源: {pk_source}, 长度: {len(recipient_pk)} bytes)")
                 encrypted_manifest_for_peer = self.manifest_key_manager.encrypt_manifest(
                     raw_manifest_bytes, recipient_pk
                 )
             else:
-                print(f"[BackupManager] 未找到节点 {peer_addr} 的公钥，使用发送者公钥加密（回退模式）")
+                print(f"[BackupManager] ⚠ 未找到节点 {peer_addr} 的公钥！")
+                print(f"[BackupManager] ⚠ 回退使用发送者公钥加密，这可能导致接收方无法解密！")
                 encrypted_manifest_for_peer = encrypted_manifest_for_sender
             
             # 发送给该节点
@@ -420,8 +436,17 @@ class BackupManager:
             
             try:
                 encrypted_manifest_bytes = base64.b64decode(secure_manifest_b64)
+                
+                # 添加调试信息
+                print(f"\n[BackupManager] ========== 收到加密清单 ==========")
+                print(f"[BackupManager] 会话ID: {session_id}")
+                print(f"[BackupManager] 加密清单字节数: {len(encrypted_manifest_bytes)}")
+                print(f"[BackupManager] 加密清单格式标志: 0x{encrypted_manifest_bytes[0]:02x}" if len(encrypted_manifest_bytes) > 0 else "[BackupManager] 加密清单为空")
+                print(f"[BackupManager] 文件保存路径: {manifest_path}")
+                
                 with open(manifest_path, "wb") as f:
                     f.write(encrypted_manifest_bytes)
-                print(f"[BackupManager] 加密清单已盲存: {session_id}.enc")
+                print(f"[BackupManager] ✓ 加密清单已保存: {session_id}.enc")
+                print(f"[BackupManager] =====================================\n")
             except Exception as e:
-                print(f"[BackupManager] 加密清单落盘失败: {e}")
+                print(f"[BackupManager] ✗ 加密清单落盘失败: {e}")

@@ -432,7 +432,12 @@ class RecoveryManager:
             processed_size = 0
             original_size = manifest.get("file_size", 0)
             
+            print(f"\n[RecoveryManager] ========== 开始哈希校验 ==========")
+            print(f"[RecoveryManager] 原始文件大小: {original_size} bytes")
+            print(f"[RecoveryManager] 原始哈希值: {manifest.get('original_hash', 'N/A')[:16]}...")
+            
             with open(restored_path, "wb") as out_f:
+                chunk_count = 0
                 while True:
                     chunk_shares = []
                     for idx, fh in file_handles:
@@ -458,6 +463,10 @@ class RecoveryManager:
                     # 只对实际数据计算哈希（不包括补零）
                     hasher.update(recovered_chunk[:actual_data_length])
                     
+                    if chunk_count < 3 or chunk_count % 100 == 0:
+                        print(f"[RecoveryManager] 处理块 {chunk_count}: 重构长度={len(recovered_chunk)}, 有效长度={actual_data_length}")
+                    chunk_count += 1
+                    
                     processed_size += len(recovered_chunk)
                     if self.on_progress_update:
                         progress = min(min(processed_size, original_size) / original_size * 100, 100) if original_size > 0 else 0
@@ -470,9 +479,40 @@ class RecoveryManager:
                 with open(restored_path, "r+b") as f:
                     if original_size is not None:
                         f.truncate(original_size)
+                        print(f"[RecoveryManager] 文件已裁剪到原始大小: {original_size} bytes")
             
-            if hasher.hexdigest() != manifest["original_hash"]:
+            # 最终哈希校验
+            calculated_hash = hasher.hexdigest()
+            expected_hash = manifest["original_hash"]
+            
+            print(f"[RecoveryManager] 计算哈希值: {calculated_hash[:16]}...")
+            print(f"[RecoveryManager] 期望哈希值: {expected_hash[:16]}...")
+            
+            if calculated_hash != expected_hash:
+                print(f"[RecoveryManager] ======================================")
+                print(f"[RecoveryManager] ❌ 哈希校验不匹配！")
+                print(f"[RecoveryManager] 可能原因:")
+                print(f"[RecoveryManager]   1. 份额数据损坏或不完整")
+                print(f"[RecoveryManager]   2. 恢复时使用的份额数量不足")
+                print(f"[RecoveryManager]   3. 补零处理逻辑有问题")
+                print(f"[RecoveryManager] ======================================")
+                
+                # 额外调试：重新计算一次文件哈希，看看问题所在
+                print(f"\n[RecoveryManager] ========== 额外验证 ==========")
+                file_checker = hashlib.sha256()
+                try:
+                    with open(restored_path, "rb") as f:
+                        for chunk in iter(lambda: f.read(4096), b""):
+                            file_checker.update(chunk)
+                    print(f"[RecoveryManager] 从文件直接计算的哈希: {file_checker.hexdigest()[:16]}...")
+                except Exception as e:
+                    print(f"[RecoveryManager] 额外验证失败: {e}")
+                print(f"[RecoveryManager] =============================\n")
+                
                 raise ValueError("数据完整性受损：哈希校验不匹配")
+            
+            print(f"[RecoveryManager] ✓ 哈希校验通过！")
+            print(f"[RecoveryManager] =====================================\n")
                 
             del self.active_manifests[file_hash]
             if self.on_recovery_success:
